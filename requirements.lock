@@ -1,0 +1,32 @@
+# This file is generated based on the implemented core logic.
+# Exact versions might need adjustments based on further testing and compatibility checks.
+# Use `pip freeze > requirements.lock` or poetry/pipenv for more robust dependency management.
+
+fastapi>=0.110.0,<0.111.0
+uvicorn[standard]>=0.29.0,<0.30.0
+pydantic-settings>=2.2.0,<2.3.0
+python-dotenv>=1.0.0,<1.1.0
+requests>=2.31.0,<2.32.0
+feedparser>=6.0.10,<6.1.0
+sentence-transformers>=2.7.0,<2.8.0
+qdrant-client>=1.8.0,<1.9.0
+tenacity>=8.2.0,<8.3.0
+pandas>=2.2.0,<2.3.0
+numpy>=1.26.0,<1.27.0
+discord.py>=2.3.0,<2.4.0
+apache-airflow>=2.8.0,<2.9.0 # Note: Airflow has many extras, install as needed
+SQLAlchemy>=2.0.0,<2.1.0
+psycopg2-binary>=2.9.0,<2.10.0 # For PostgreSQL connection
+alembic>=1.13.0,<1.14.0 # For DB migrations
+
+# LLM Libraries
+openai>=1.14.0,<1.15.0
+google-generativeai>=0.5.0,<0.6.0
+# transformers>=4.39.0,<4.40.0
+# torch>=2.2.0,<2.3.0 # Dependency for some transformers models
+
+# Optional/Development Dependencies
+# pytest>=8.0.0,<8.1.0
+# vcrpy>=5.0.0,<5.1.0 # For KIS API mocking in tests
+
+# 필요한 패키지 목록 

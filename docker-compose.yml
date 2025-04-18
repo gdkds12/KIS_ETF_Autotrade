@@ -1,0 +1,58 @@
+# Infra(Postgres,Qdrant,Grafana) 
+
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: ${DB_USER:-user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: ${DB_NAME:-autotrade}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - autotrade_net
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: qdrant_db
+    ports:
+      - "${QDRANT_PORT:-6333}:6333"
+      - "6334:6334" # gRPC 포트 (옵션)
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    networks:
+      - autotrade_net
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    container_name: grafana_dashboard
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - postgres
+    networks:
+      - autotrade_net
+    # environment:
+    #   - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+    #   - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    #   - GF_DATABASE_TYPE=postgres
+    #   - GF_DATABASE_HOST=postgres:5432
+    #   - GF_DATABASE_NAME=${DB_NAME:-autotrade}
+    #   - GF_DATABASE_USER=${DB_USER:-user}
+    #   - GF_DATABASE_PASSWORD=${DB_PASSWORD:-password}
+
+volumes:
+  postgres_data:
+  qdrant_storage:
+  grafana_data:
+
+networks:
+  autotrade_net:
+    driver: bridge 
