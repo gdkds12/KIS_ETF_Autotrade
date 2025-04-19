@@ -8,7 +8,7 @@ import finnhub
 import os
 import logging
 from typing import List, Dict, Any
-from src.config import settings
+# from src.config import settings # Settings might not be needed directly anymore
 
 logger = logging.getLogger(__name__)
 
@@ -21,39 +21,27 @@ class FinnhubClient:
         """Initializes the Finnhub client using the provided API token."""
         if not token:
             logger.error("Finnhub API token is missing.")
-            # Raise an error or handle gracefully depending on requirements
             raise ValueError("Finnhub API token is required.")
             
         try:
-            # Configure the API client using the token
-            configuration = finnhub.Configuration(
-                api_key={'token': token}
-            )
-            # Create the ApiClient context and store the DefaultApi instance
-            self.api_client = finnhub.ApiClient(configuration)
-            self.default_api = finnhub.DefaultApi(self.api_client)
+            # Finnhub 파이썬 SDK: Client(api_key=...) 사용
+            self.client = finnhub.Client(api_key=token)
             logger.info("Finnhub client initialized successfully.")
         except Exception as e:
              logger.error(f"Failed to initialize Finnhub client: {e}", exc_info=True)
-             # Clean up potentially partially initialized client
-             if hasattr(self, 'api_client'):
-                 try:
-                     self.api_client.close()
-                 except Exception:
-                     pass # Ignore errors during cleanup
              raise FinnhubClientError(f"Finnhub client initialization failed: {e}")
 
     def get_quote(self, symbol: str):
         """Fetches the real-time quote for a given stock symbol."""
         logger.debug(f"Fetching quote for symbol: {symbol}")
         try:
-            # Use the DefaultApi instance to make the API call
-            quote_data = self.default_api.quote(symbol)
+            # Use the client directly
+            quote_data = self.client.quote(symbol)
             logger.debug(f"Received quote for {symbol}: {quote_data}")
             return quote_data
-        except finnhub.ApiException as e:
-            logger.error(f"Finnhub API error fetching quote for {symbol}: {e.status} - {e.reason} - {e.body}", exc_info=True)
-            raise FinnhubClientError(f"Finnhub API error fetching quote: {e.reason}")
+        except finnhub.FinnhubAPIException as e: # Use FinnhubAPIException if provided by client
+            logger.error(f"Finnhub API error fetching quote for {symbol}: {e}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error fetching quote: {e}")
         except Exception as e:
             logger.error(f"Unexpected error fetching quote for {symbol}: {e}", exc_info=True)
             raise FinnhubClientError(f"Unexpected error fetching quote: {e}")
@@ -62,13 +50,13 @@ class FinnhubClient:
         """Fetches candle (chart) data for a given stock symbol."""
         logger.debug(f"Fetching candles for {symbol} (Resolution: {resolution}, From: {_from}, To: {to})")
         try:
-             # Use the DefaultApi instance to make the API call
-            candle_data = self.default_api.stock_candles(symbol, resolution, _from, to)
-            logger.debug(f"Received {len(candle_data.get('c', [])) if candle_data else 0} candles for {symbol}")
+             # Use the client directly
+            candle_data = self.client.stock_candles(symbol, resolution, _from, to)
+            logger.debug(f"Received candle data for {symbol}")
             return candle_data
-        except finnhub.ApiException as e:
-            logger.error(f"Finnhub API error fetching candles for {symbol}: {e.status} - {e.reason} - {e.body}", exc_info=True)
-            raise FinnhubClientError(f"Finnhub API error fetching candles: {e.reason}")
+        except finnhub.FinnhubAPIException as e:
+            logger.error(f"Finnhub API error fetching candles for {symbol}: {e}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error fetching candles: {e}")
         except Exception as e:
              logger.error(f"Unexpected error fetching candles for {symbol}: {e}", exc_info=True)
              raise FinnhubClientError(f"Unexpected error fetching candles: {e}")
@@ -77,12 +65,13 @@ class FinnhubClient:
         """Performs a symbol lookup using the query."""
         logger.debug(f"Searching symbols with query: '{query}'")
         try:
-            search_result = self.default_api.symbol_lookup(query)
-            logger.debug(f"Symbol search returned {search_result.get('count', 0)} results for '{query}'")
-            return search_result.to_dict() # Convert result to dict if necessary
-        except finnhub.ApiException as e:
-            logger.error(f"Finnhub API error searching symbols for '{query}': {e.status} - {e.reason} - {e.body}", exc_info=True)
-            raise FinnhubClientError(f"Finnhub API error searching symbols: {e.reason}")
+            search_result = self.client.symbol_lookup(query)
+            logger.debug(f"Symbol search returned results for '{query}'")
+            # The client might return a dict directly
+            return search_result
+        except finnhub.FinnhubAPIException as e:
+            logger.error(f"Finnhub API error searching symbols for '{query}': {e}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error searching symbols: {e}")
         except Exception as e:
             logger.error(f"Unexpected error searching symbols for '{query}': {e}", exc_info=True)
             raise FinnhubClientError(f"Unexpected error searching symbols: {e}")
@@ -102,21 +91,16 @@ class FinnhubClient:
         Raises:
             FinnhubClientError: API 호출 중 오류 발생 시
         """
-        if not self.api_client:
-            logger.error("Finnhub client not initialized. Cannot fetch company news.")
-            return []
-            
+        logger.debug(f"Fetching company news for {symbol} ({start_date} to {end_date})")
         try:
-            # logger.debug(f"{symbol}에 대한 회사 뉴스 검색 ({start_date} ~ {end_date})...")
-            news = self.default_api.company_news(symbol, _from=start_date, to=end_date)
-            # logger.debug(f"{symbol} 뉴스 결과 수신: {len(news)}개 항목")
+            news = self.client.company_news(symbol, _from=start_date, to=end_date)
             return news
-        except finnhub.ApiException as e:
-            logger.error(f"Finnhub API 오류 발생 (회사 뉴스: {symbol}): {e}")
-            raise FinnhubClientError(f"Finnhub API 오류: {e}")
+        except finnhub.FinnhubAPIException as e:
+            logger.error(f"Finnhub API error fetching company news for {symbol}: {e}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error fetching company news: {e}")
         except Exception as e:
-            logger.error(f"{symbol} 회사 뉴스 검색 중 예상치 못한 오류 발생: {e}", exc_info=True)
-            raise FinnhubClientError(f"{symbol} 회사 뉴스 검색 중 예상치 못한 오류: {e}")
+            logger.error(f"Unexpected error fetching company news for {symbol}: {e}", exc_info=True)
+            raise FinnhubClientError(f"Unexpected error fetching company news: {e}")
 
     def get_general_news(self, category: str = 'general', min_id: int = 0) -> List[Dict[str, Any]]:
         """일반 시장 뉴스를 가져옵니다.
@@ -132,30 +116,33 @@ class FinnhubClient:
         Raises:
             FinnhubClientError: API 호출 중 오류 발생 시
         """
-        if not self.api_client:
-            logger.error("Finnhub client not initialized. Cannot fetch general news.")
-            return []
-            
+        logger.debug(f"Fetching general news for category '{category}'")
         try:
-            # logger.debug(f"'{category}' 카테고리의 일반 뉴스 검색 중 (min_id: {min_id})...")
-            news = self.default_api.general_news(category, min_id=min_id)
-            # logger.debug(f"일반 뉴스 결과 수신: {len(news)}개 항목")
+            news = self.client.general_news(category, min_id=min_id)
             return news
-        except finnhub.ApiException as e:
-            logger.error(f"Finnhub API 오류 발생 (일반 뉴스: {category}): {e}")
-            raise FinnhubClientError(f"Finnhub API 오류: {e}")
+        except finnhub.FinnhubAPIException as e:
+            logger.error(f"Finnhub API error fetching general news for '{category}': {e}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error fetching general news: {e}")
         except Exception as e:
-            logger.error(f"'{category}' 카테고리 일반 뉴스 검색 중 예상치 못한 오류 발생: {e}", exc_info=True)
-            raise FinnhubClientError(f"'{category}' 일반 뉴스 검색 중 예상치 못한 오류: {e}")
+            logger.error(f"Unexpected error fetching general news for '{category}': {e}", exc_info=True)
+            raise FinnhubClientError(f"Unexpected error fetching general news: {e}")
 
     def close(self):
         """Closes the API client connection and releases resources."""
-        if hasattr(self, 'api_client') and self.api_client:
+        # The finnhub.Client might manage its session implicitly
+        # or use requests underneath. Explicit closing might not be needed
+        # unless documented or causing issues.
+        # Check if session attribute exists and try closing if it does.
+        if hasattr(self.client, 'session') and self.client.session:
             try:
-                self.api_client.close()
-                logger.info("Finnhub API client closed.")
+                self.client.session.close()
+                logger.info("Closed Finnhub client session.")
             except Exception as e:
-                logger.error(f"Error closing Finnhub API client: {e}", exc_info=True)
+                # Log error but don't prevent program flow if closing fails
+                logger.warning(f"Could not close Finnhub client session: {e}", exc_info=True)
+                pass
+        else:
+            logger.debug("No explicit session found on Finnhub client to close.")
 
 # Example usage (optional, for testing)
 if __name__ == '__main__':
