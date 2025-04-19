@@ -243,30 +243,83 @@ class MemoryRAG:
             db.close()
 
     def save_trade_results(self, trade_results: list):
-        """거래 결과를 메모리(Qdrant)에 저장합니다."""
-        logger.info(f"Saving {len(trade_results)} trade results to memory...")
+        """(Deprecated) 거래 결과를 메모리(Qdrant)에 저장합니다. 대신 save_execution_results 사용 권장."""
+        logger.warning("save_trade_results is deprecated. Use save_execution_results instead.")
+        # Keep for backward compatibility or simple cases if needed
         saved_count = 0
         for result in trade_results:
-            status = "성공" if result.get("rt_cd") == "0" else "실패"
-            msg = result.get("msg1", "메시지 없음")
-            text = f"거래 결과 [{status}]: {msg}"
-            metadata = {"type": "trade_result", "status_code": result.get("rt_cd")}
-            order_info = result.get("order", {})
-            if order_info:
-                 metadata.update(order_info) # 원본 주문 정보 추가
-                 text += f" (주문: {order_info.get('action')} {order_info.get('symbol')} {order_info.get('quantity')}@{order_info.get('price')})"
-                 
-            if result.get("rt_cd") == "0" and "output" in result:
-                order_no = result["output"].get("ODNO")
-                order_time = result["output"].get("ORD_TMD")
-                if order_no: metadata["order_number"] = order_no
-                if order_time: metadata["order_time"] = order_time
-                text += f" [주문번호:{order_no}]"
+            try:
+                status = "성공" if result.get("rt_cd") == "0" else "실패"
+                order_info = result.get('order', {})
+                symbol = order_info.get('symbol', 'N/A')
+                action = order_info.get('action', 'N/A').upper()
+                quantity = order_info.get('quantity', 'N/A')
+                # Simple text representation
+                text = f"거래 결과 [{status}]: {action} {symbol} {quantity}주. 메시지: {result.get('msg1', 'N/A')}"
+                metadata = {
+                    "type": "trade_result",
+                    "status": status.lower(),
+                    "symbol": symbol,
+                    "action": action.lower(),
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                }
+                self.save_memory(text, metadata=metadata)
+                saved_count += 1
+            except Exception as e:
+                logger.error(f"Failed to save single trade result to memory: {result}. Error: {e}", exc_info=True)
+        logger.info(f"(Deprecated) Saved {saved_count}/{len(trade_results)} trade results to memory.")
 
-            self.save_memory(text, metadata=metadata)
-            saved_count += 1
-            
-        logger.info(f"Finished saving {saved_count} trade results to Qdrant.")
+    def save_execution_results(self, execution_results: list):
+        """Orchestrator의 실행 결과 리스트를 메모리(Qdrant)에 저장합니다."""
+        logger.info(f"Saving {len(execution_results)} execution results to memory...")
+        saved_count = 0
+        failed_count = 0
+        cycle_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+        for result in execution_results:
+            try:
+                action_type = result.get('action_type', 'unknown')
+                status = result.get('status', 'unknown')
+                detail = result.get('detail', 'N/A')
+                metadata = {
+                    "type": "execution_result",
+                    "action_type": action_type,
+                    "status": status,
+                    "timestamp": cycle_timestamp # Use same timestamp for the whole cycle
+                }
+                text = f"실행 결과 [{action_type.upper()}/{status.upper()}]: {detail}"
+
+                if action_type in ['buy', 'sell']:
+                    order_info = result.get('order', {})
+                    metadata['symbol'] = order_info.get('symbol')
+                    metadata['quantity'] = order_info.get('quantity')
+                    metadata['reason'] = order_info.get('reason')
+                    text += f" (Order: {order_info.get('action')} {metadata['symbol']} {metadata['quantity']}주, Reason: {metadata['reason']})"
+                elif action_type == 'briefing_summary':
+                     metadata['notes'] = result.get('notes')
+                     text = f"실행 결과 [LLM 브리핑 요약]: {len(metadata.get('notes', []))}개 노트"
+                elif action_type == 'briefing':
+                     text = f"실행 결과 [LLM 브리핑 노트]: {detail}"
+                elif action_type == 'hold':
+                     metadata['reason'] = detail
+                     text = f"실행 결과 [HOLD]: {detail}"
+
+                # Add KIS response if available (maybe just key info)
+                kis_response = result.get('kis_response')
+                if kis_response:
+                    metadata['kis_rt_cd'] = kis_response.get('rt_cd')
+                    metadata['kis_msg1'] = kis_response.get('msg1')
+                    metadata['kis_odno'] = kis_response.get('ODNO')
+
+                # Save to Qdrant
+                self.save_memory(text, metadata=metadata)
+                saved_count += 1
+
+            except Exception as e:
+                logger.error(f"Failed to save execution result to memory: {result}. Error: {e}", exc_info=True)
+                failed_count += 1
+        
+        logger.info(f"Finished saving execution results. Saved: {saved_count}, Failed: {failed_count}")
 
 # Example Usage
 if __name__ == "__main__":

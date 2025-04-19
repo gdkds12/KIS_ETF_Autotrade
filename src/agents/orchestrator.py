@@ -3,6 +3,10 @@
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+import google.generativeai as genai
+import json # For parsing LLM response
+import uuid
+from datetime import datetime
 
 # TODO: Import other agents (InfoCrawler, MemoryRAG, Strategy, RiskGuard, Broker, Briefing)
 
@@ -16,7 +20,8 @@ from src.agents.risk_guard import RiskGuard
 from src.agents.briefing import BriefingAgent
 # from src.db.models import SessionLocal # If direct DB session needed here
 from qdrant_client import QdrantClient
-# from some_notification_client import NotificationClient # e.g., for Slack/Telegram
+from src.discord.bot import DiscordRequestType, send_discord_request # Hypothetical import
+import asyncio # For potential async operations
 
 logger = logging.getLogger(__name__)
 
@@ -42,85 +47,344 @@ kis_retry_decorator = retry(
 )
 
 class Orchestrator:
-    def __init__(self, broker: KisBroker, db_session, qdrant_client: QdrantClient):
+    def __init__(self, broker: KisBroker, db_session_factory, qdrant_client: QdrantClient):
         """Orchestrator 초기화
 
         Args:
             broker: KIS Broker 인스턴스
-            db_session: SQLAlchemy 세션
+            db_session_factory: SQLAlchemy 세션 팩토리
             qdrant_client: Qdrant 클라이언트 인스턴스
         """
         self.broker = broker
-        self.db_session = db_session
+        self.db_session_factory = db_session_factory
         self.qdrant_client = qdrant_client
-        # TODO: Initialize other agents
-        # self.info_crawler = InfoCrawler()
-        # self.memory_rag = MemoryRAG(qdrant_client, db_session)
-        # self.strategy = Strategy()
-        # self.risk_guard = RiskGuard()
-        # self.briefing = Briefing()
-        logger.info("Orchestrator initialized.")
+        self.llm_model = None
+
+        # Initialize LLM Model (Gemini Main Tier)
+        if settings.GOOGLE_API_KEY:
+            try:
+                if not genai.is_configured():
+                    genai.configure(api_key=settings.GOOGLE_API_KEY)
+                self.llm_model = genai.GenerativeModel(settings.LLM_MAIN_TIER_MODEL) # Use main tier for orchestration
+                logger.info(f"Orchestrator initialized with Gemini model: {settings.LLM_MAIN_TIER_MODEL}")
+            except Exception as e:
+                logger.error(f"Failed to initialize Gemini model for Orchestrator: {e}", exc_info=True)
+                # Consider fallback or raising an error depending on criticality
+        else:
+            logger.warning("GOOGLE_API_KEY not set. Orchestrator LLM functionality will be disabled.")
 
         # Initialize Agents
-        # TODO: Pass necessary configurations or dependencies to agents
-        self.info_crawler = InfoCrawler() # LLM model could be passed here
-        self.memory_rag = MemoryRAG(db_session=db_session) # Uses Qdrant client via settings
-        # TODO: Define target symbols from config or elsewhere
-        target_etfs = ['069500', '229200', '114800'] # Example: KODEX 200, KOSDAQ 150, KODEX Inverse
-        self.strategy = TradingStrategy(broker=self.broker, 
-                                        investment_amount=settings.INVESTMENT_AMOUNT, 
-                                        target_symbols=target_etfs)
+        self.info_crawler = InfoCrawler() # LLM model could be passed here if needed by crawler
+        self.memory_rag = MemoryRAG(db_session_factory=self.db_session_factory) # Pass factory
+        # Define target symbols - should ideally come from a dynamic source or config
+        target_etfs = settings.TARGET_SYMBOLS # Use symbols from config
+        # Strategy is now simplified or used differently, initialized later if needed
+        # self.strategy = TradingStrategy(broker=self.broker,
+        #                                 investment_amount=settings.INVESTMENT_AMOUNT,
+        #                                 target_symbols=target_etfs)
         self.risk_guard = RiskGuard(broker=self.broker)
-        self.briefing_agent = BriefingAgent()
-        # self.notification_client = NotificationClient(webhook_url=settings.SLACK_WEBHOOK) # Example
+        self.briefing_agent = BriefingAgent() # LLM could be passed here too
+
+        logger.info("Orchestrator initialized all agents.")
 
     def run_daily_cycle(self):
-        """일일 자동매매 사이클 실행"
+        """일일 자동매매 사이클 실행 (LLM 중심)
         """
-        logger.info("Starting daily cycle...")
+        logger.info("Starting daily cycle with LLM orchestration...")
+        if not self.llm_model:
+            logger.error("LLM model not initialized. Cannot run daily cycle.")
+            return
+
         try:
-            # 1. InfoCrawler: 시장 정보 수집 및 요약
+            # 1. 정보 수집 및 준비 (InfoCrawler, Market Data, Memory)
             market_summary = self._run_info_crawler()
-
-            # 2. Memory Summarize & Upsert (이전 세션 요약 등)
-            self._summarize_and_upsert_memory()
-
-            # 3. Market Fetch (시세 등)
             market_data = self._fetch_market_data()
+            current_positions = self._get_current_positions()
+            # Retrieve relevant past memories/context using RAG
+            rag_context = self._retrieve_relevant_memory(market_summary)
 
-            # 4. Strategy: 투자 전략 실행
-            trading_signals = self._run_strategy(market_data, market_summary)
+            # 2. LLM 추론 및 행동 계획 수립
+            action_plan_str = self._get_llm_action_plan(market_summary, market_data, current_positions, rag_context)
 
-            # 5. RiskGuard: 주문 리스크 검증
-            validated_orders = self._run_risk_guard(trading_signals)
+            if not action_plan_str:
+                logger.warning("LLM did not provide an action plan. Ending cycle.")
+                return
 
-            # 6. Broker Execute: 주문 실행
-            order_results = self._execute_orders(validated_orders)
+            # 3. 행동 계획 파싱 및 실행
+            try:
+                # Expecting LLM to return a JSON list of actions
+                action_plan = json.loads(action_plan_str)
+                logger.info(f"LLM Action Plan: {action_plan}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse LLM action plan JSON: {e}. Plan received: {action_plan_str}")
+                # Maybe try a simpler parsing or ask LLM to reformat
+                # For now, end cycle on parse failure
+                return
 
-            # 7. Briefing: 결과 브리핑 생성
-            briefing_content = self._generate_briefing(order_results)
+            # --- 실행 단계 ---
+            # 분리된 함수로 만들어 재사용성 높임
+            execution_results = self._execute_action_plan(action_plan)
 
-            # 8. Memory Upsert (금일 거래 결과 등)
-            self._upsert_trade_results(order_results)
+            # 4. 결과 보고 및 저장
+            briefing_content = self._generate_briefing(execution_results)
+            self._upsert_trade_results(execution_results) # Save results to memory/DB
 
-            logger.info("Daily cycle completed successfully.")
-            # TODO: Send success notification (e.g., Slack, Discord)
-            print(briefing_content) # 임시 출력
+            logger.info("Daily cycle completed successfully with LLM orchestration.")
+            self.send_notification(briefing_content) # Use new notification method
 
         except Exception as e:
             logger.error(f"Daily cycle failed: {e}", exc_info=True)
-            # TODO: Implement retry logic and send failure alert
+            self.send_notification(f"Daily cycle failed: {e}", is_error=True)
+
+    def _get_llm_action_plan(self, market_summary, market_data, current_positions, rag_context) -> str | None:
+        """LLM에게 현재 상황 정보를 제공하고 행동 계획(JSON)을 요청합니다.
+        """
+        logger.info("Asking LLM for the daily action plan...")
+        if not self.llm_model:
+            return None
+
+        # Build the prompt for the LLM
+        prompt = f"""
+        You are the master AI orchestrator for an ETF autotrading system. Your goal is to maximize returns while managing risk for a small investment amount ({settings.INVESTMENT_AMOUNT:,.0f} KRW).
+        Today's Date: {datetime.now().strftime('%Y-%m-%d')}
+
+        Current Market Situation:
+        - Summary: {market_summary}
+        - Key ETF Prices: {json.dumps({k: v for k, v in market_data.items() if v}, indent=2)}
+
+        Current Portfolio:
+        {json.dumps(current_positions, indent=2)}
+
+        Relevant Past Context (from Memory/RAG):
+        {rag_context}
+
+        Based on all the above information, your analysis, and current best practices for ETF trading (consider momentum, mean reversion, market sentiment, risk management), decide the course of action for today.
+
+        Your output MUST be a JSON list of actions. Each action should be a dictionary with 'action_type' and necessary parameters.
+        Valid 'action_type' values are:
+        - 'buy': Execute a buy order. Requires 'symbol' (str), 'quantity' (int). Price will be market price.
+        - 'sell': Execute a sell order. Requires 'symbol' (str), 'quantity' (int). Price will be market price.
+        - 'hold': No action required for a specific symbol or overall. Can optionally include 'reason' (str).
+        - 'briefing': Add a specific insight or note to the daily briefing. Requires 'message' (str).
+
+        Example JSON Output:
+        [
+          {"action_type": "sell", "symbol": "069500", "quantity": 5, "reason": "Stop-loss triggered based on yesterday's drop"},
+          {"action_type": "buy", "symbol": "229200", "quantity": 10, "reason": "Positive momentum signal and favorable market summary"},
+          {"action_type": "hold", "reason": "Market conditions are uncertain, wait for clearer signals."},
+          {"action_type": "briefing", "message": "Observed increased volatility in the energy sector ETFs."}
+        ]
+
+        If no trades are recommended, return a list containing only a 'hold' or 'briefing' action, or an empty list [].
+        Ensure quantities are integers and symbols are valid KIS ETF codes.
+        Be mindful of the total investment amount and avoid over-allocation. Use the RiskGuard agent for final checks implicitly.
+
+        Generate the JSON action plan now:
+        """
+
+        try:
+            # Configure safety settings if needed
+            safety_settings = {} # Adjust as necessary
+            response = self.llm_model.generate_content(prompt, safety_settings=safety_settings)
+            
+            # Extract JSON part from the response (LLMs sometimes add extra text)
+            response_text = response.text.strip()
+            json_start = response_text.find('[')
+            json_end = response_text.rfind(']')
+            if json_start != -1 and json_end != -1:
+                action_plan_json = response_text[json_start:json_end+1]
+                logger.info(f"Received action plan from LLM: {action_plan_json}")
+                return action_plan_json
+            else:
+                 logger.error(f"LLM response did not contain a valid JSON list: {response_text}")
+                 return None
+
+        except Exception as e:
+            logger.error(f"LLM generation failed: {e}", exc_info=True)
+            return None
+
+    def _execute_action_plan(self, action_plan: list) -> list:
+        """파싱된 행동 계획을 단계적으로 실행합니다. (사용자 승인 단계 추가)
+        """
+        logger.info(f"Executing action plan with {len(action_plan)} steps...")
+        execution_results = []
+        orders_to_request_confirmation = [] # Changed variable name
+        briefing_notes = []
+
+        # 1. Parse actions and separate orders from other actions
+        for action in action_plan:
+            action_type = action.get('action_type')
+            if action_type in ['buy', 'sell']:
+                symbol = action.get('symbol')
+                quantity = action.get('quantity')
+                if symbol and isinstance(quantity, int) and quantity > 0:
+                     # Add to potential orders - RiskGuard will validate later
+                     orders_to_request_confirmation.append({
+                         "symbol": symbol,
+                         "action": action_type, # 'buy' or 'sell'
+                         "quantity": quantity,
+                         "price": 0, # Market order based on LLM instruction
+                         "reason": action.get('reason', f'LLM directed {action_type}')
+                     })
+                else:
+                    logger.warning(f"Invalid buy/sell action received from LLM: {action}")
+                    execution_results.append({"action_type": action_type, "status": "invalid", "detail": action})
+            elif action_type == 'briefing':
+                message = action.get('message')
+                if message:
+                    briefing_notes.append(message)
+                    execution_results.append({"action_type": action_type, "status": "noted", "detail": message})
+            elif action_type == 'hold':
+                logger.info(f"LLM directed 'hold': {action.get('reason', 'No specific reason')}")
+                execution_results.append({"action_type": action_type, "status": "noted", "detail": action.get('reason')})
+            else:
+                 logger.warning(f"Unknown action type received from LLM: {action_type}")
+                 execution_results.append({"action_type": action_type, "status": "unknown", "detail": action})
+
+        # 2. Validate potential orders with RiskGuard
+        if orders_to_request_confirmation:
+            logger.info(f"Passing {len(orders_to_request_confirmation)} potential orders to RiskGuard...")
+            validated_orders = self.risk_guard.validate_orders(orders_to_request_confirmation)
+            logger.info(f"{len(validated_orders)} orders passed RiskGuard validation.")
+        else:
+            validated_orders = []
+
+        # 3. Request User Confirmation via Discord (INSTEAD of direct execution)
+        if validated_orders:
+            confirmation_result = self._request_user_confirmation(validated_orders)
+            execution_results.append(confirmation_result) # Record the request attempt
+
+            # --- IMPORTANT --- 
+            # Actual order execution (_execute_orders) should happen *after* receiving 
+            # user approval (e.g., 'yes') from Discord.
+            # This requires a mechanism for the Discord bot to communicate the user's
+            # decision back to the Orchestrator (e.g., callback, API call, message queue).
+            # Since that mechanism is not yet implemented, we are *NOT* calling 
+            # self._execute_orders here.
+            #
+            # Conceptual flow after user clicks 'Yes':
+            # 1. Discord bot receives 'Yes' interaction.
+            # 2. Bot notifies Orchestrator (e.g., calls an API endpoint on FastAPI).
+            # 3. Orchestrator's endpoint handler receives the approved orders and calls:
+            #    approved_order_results = self._execute_orders(approved_orders)
+            #    self._upsert_trade_results(approved_order_results) # Save results
+            #    self.send_notification("User approved orders executed.")
+            #
+            # For 'No' or 'Hold', log the decision and potentially save context to memory.
+            # --- End Conceptual Flow ---
+
+        else:
+            logger.info("No orders require user confirmation.")
+
+        # 4. Add briefing notes to results (always happens regardless of orders)
+        execution_results.append({"action_type": "briefing_summary", "notes": briefing_notes})
+
+        return execution_results # Return results including confirmation request status
+
+    def _request_user_confirmation(self, orders_to_confirm: list) -> dict:
+        """검증된 주문 목록을 Discord 봇으로 보내 사용자 승인을 요청합니다. (실제 전송은 추후 구현)
+        """
+        request_id = str(uuid.uuid4()) # Unique ID for this confirmation request
+        logger.info(f"Requesting user confirmation via Discord for {len(orders_to_confirm)} orders. Request ID: {request_id}")
+
+        # Prepare data payload for Discord bot
+        payload = {
+            "request_id": request_id,
+            "orders": orders_to_confirm
+        }
+
+        try:
+            # --- TODO: Implement actual communication with Discord Bot --- 
+            # This function (`send_discord_request`) needs to be implemented in `src/discord/bot.py` 
+            # or a shared communication module. It should handle:
+            # - Formatting the orders into a user-friendly message (e.g., Embed).
+            # - Adding Yes/No/Hold buttons.
+            # - Sending the message to the appropriate Discord channel/user.
+            # - Storing the request_id and orders temporarily to handle the user's response.
+            # Example hypothetical call:
+            # success = await send_discord_request(type=DiscordRequestType.ORDER_CONFIRMATION, data=payload)
+            success = True # Placeholder: Assume request sent successfully
+            # -----------------------------------------------------------------
+            
+            if success:
+                logger.info(f"Successfully sent confirmation request {request_id} to Discord (or placeholder success).")
+                return {
+                    "action_type": "user_confirmation_request",
+                    "status": "sent",
+                    "detail": f"Sent confirmation request for {len(orders_to_confirm)} orders.",
+                    "request_id": request_id,
+                    "orders_requested": orders_to_confirm
+                }
+            else:
+                raise RuntimeError("Failed to send request to Discord bot.")
+
+        except Exception as e:
+             logger.error(f"Failed to send Discord confirmation request {request_id}: {e}", exc_info=True)
+             # Return error status, potentially retry or handle differently
+             return {
+                 "action_type": "user_confirmation_request",
+                 "status": "failed",
+                 "detail": f"Error sending confirmation request: {e}",
+                 "request_id": request_id,
+                 "orders_requested": orders_to_confirm
+             }
 
     def _run_info_crawler(self):
         logger.info("Running Info Crawler...")
-        # TODO: Implement info_crawler call
-        # return self.info_crawler.get_market_summary()
-        return "Market is stable today." # Placeholder
+        try:
+            # Let InfoCrawler handle its own logic, potentially using LLM for summarization
+            summary = self.info_crawler.get_market_summary()
+            if summary:
+                 # Optionally save summary to memory
+                 self.memory_rag.save_memory(summary, metadata={"type": "market_summary", "source": "infocrawler"})
+                 return summary
+            else:
+                 return "No market summary available."
+        except Exception as e:
+             logger.error(f"InfoCrawler failed: {e}", exc_info=True)
+             return "Error fetching market summary."
+
+    def _retrieve_relevant_memory(self, current_summary: str, limit: int = 5) -> str:
+        """현재 상황과 관련된 과거 메모리를 RAG를 통해 검색합니다.
+        """
+        logger.info("Retrieving relevant memory context using RAG...")
+        try:
+            search_results = self.memory_rag.search_similar(current_summary, limit=limit)
+            context = ""
+            if search_results:
+                context += "Found relevant past context:\n"
+                for i, hit in enumerate(search_results):
+                    # Ensure payload and text exist
+                    payload_text = hit.payload.get('text', 'N/A') if hit.payload else 'N/A'
+                    context += f"{i+1}. (Score: {hit.score:.3f}) {payload_text[:200]}...\n" # Limit length
+            else:
+                 context = "No relevant past context found."
+            return context.strip()
+        except Exception as e:
+             logger.error(f"MemoryRAG search failed: {e}", exc_info=True)
+             return "Error retrieving context from memory."
+
+    @kis_retry_decorator
+    def _get_current_positions(self) -> list:
+        """현재 보유 포지션 정보를 가져옵니다.
+        """
+        logger.info("Fetching current positions...")
+        try:
+            positions = self.broker.get_positions()
+            logger.info(f"Fetched {len(positions)} current positions.")
+            return positions
+        except KisBrokerError as e:
+            logger.error(f"Failed to get current positions after retries: {e}")
+            # Depending on policy, maybe return empty list or raise error
+            return []
+        except Exception as e:
+             logger.error(f"Unexpected error getting positions: {e}", exc_info=True)
+             return []
 
     def _summarize_and_upsert_memory(self):
-        logger.info("Summarizing and upserting memory...")
-        # TODO: Implement memory summarization and upsert logic
-        # self.memory_rag.summarize_recent_sessions()
+        # This function might be less relevant now if LLM handles context directly
+        # Or could be used to summarize *this* cycle's logs after completion
+        logger.info("Skipping explicit memory summarization step in LLM-driven cycle.")
         pass
 
     @kis_retry_decorator 
@@ -171,16 +435,19 @@ class Orchestrator:
 
     @kis_retry_decorator
     def _execute_orders(self, validated_orders):
-        logger.info(f"Executing {len(validated_orders)} orders...")
+        # This method remains largely the same, but is now called CONDITIONALLY
+        # after user approval is received.
+        logger.info(f"Executing {len(validated_orders)} APPROVED orders...") # Added 'APPROVED'
         results = []
         for order in validated_orders:
             order_result = None
-            action_desc = f"{order['action']} order for {order['symbol']}"
+            # Use reason from the order if available, else generate default
+            action_desc = order.get('reason', f"{order['action']} order for {order['symbol']}")
             try:
                 # Determine KIS order parameters
                 symbol = order['symbol']
                 quantity = order['quantity']
-                price = order['price']
+                price = order['price'] # Should be 0 for market order from LLM plan
                 order_type = "01" if price == 0 else "00" # 01: 시장가, 00: 지정가
                 buy_sell_code = "02" if order['action'] == 'buy' else "01" # 02: 매수, 01: 매도
                 
@@ -193,20 +460,18 @@ class Orchestrator:
                     buy_sell_code=buy_sell_code
                 )
                 # Assume success if no exception
-                order_result = {"rt_cd": "0", "msg1": f"{action_desc} submitted successfully.", "output": kis_response_output, "order": order}
-                logger.info(f"Order executed: {order_result['msg1']} - Response: {kis_response_output}")
-                time.sleep(0.2) # Basic rate limiting between orders
+                order_result = {"action_type": order['action'], "status": "success", "detail": f"{action_desc} submitted successfully.", "kis_response": kis_response_output, "order": order}
+                logger.info(f"Order executed: {order_result['detail']} - Response: {kis_response_output}")
+                # Consider adding configurable sleep from settings
+                time.sleep(settings.ORDER_INTERVAL_SECONDS) # Use setting
 
             except KisBrokerError as e:
                 logger.error(f"Failed to execute {action_desc}: {e}")
-                # self.risk_guard.handle_api_error(e, action_desc) # Log or handle specific KIS errors
-                order_result = {"rt_cd": e.response_data.get('rt_cd', '-1') if e.response_data else '-1', 
-                                "msg1": f"{action_desc} failed: {e}", 
-                                "output": e.response_data, 
-                                "order": order}
+                # self.risk_guard.handle_api_error(e, action_desc) # Maybe RiskGuard handles this?
+                order_result = {"action_type": order['action'], "status": "failed", "detail": f"{action_desc} failed: {e}", "kis_response": e.response_data, "order": order}
             except Exception as e:
                 logger.error(f"Unexpected error executing {action_desc}: {e}", exc_info=True)
-                order_result = {"rt_cd": "-99", "msg1": f"Unexpected error during {action_desc}: {e}", "order": order}
+                order_result = {"action_type": order['action'], "status": "error", "detail": f"Unexpected error during {action_desc}: {e}", "order": order}
             
             if order_result:
                 results.append(order_result)
@@ -214,48 +479,38 @@ class Orchestrator:
         logger.info(f"Finished executing orders. Results: {len(results)} recorded.")
         return results
 
-    def _generate_briefing(self, order_results):
-        logger.info("Generating Briefing...")
-        # TODO: Implement briefing generation
-        # return self.briefing.create_markdown_report(order_results)
-        report = "## Daily Trading Report\n\n"
-        success_count = sum(1 for r in order_results if r.get("rt_cd") == "0")
-        fail_count = len(order_results) - success_count
-        report += f"- Executed Orders: {success_count}\n- Failed Orders: {fail_count}\n\n"
-        for result in order_results:
-            if result.get("rt_cd") == "0":
-                report += f"- Success: {result['msg1']} (Order No: {result['output']['ODNO']})\n"
-            else:
-                report += f"- Failed: {result['msg1']} - Order: {result.get('order', {})}\n"
-        return report # Placeholder
+    def _generate_briefing(self, execution_results):
+        logger.info("Generating Briefing based on execution results...")
+        try:
+            # Pass the structured results to the briefing agent
+            return self.briefing_agent.create_report_from_actions(execution_results)
+        except Exception as e:
+             logger.error(f"Briefing generation failed: {e}", exc_info=True)
+             return f"Error generating briefing: {e}"
 
-    def _upsert_trade_results(self, order_results):
-        logger.info("Upserting trade results to memory...")
-        # TODO: Implement upserting trade results to Qdrant/DB
-        # self.memory_rag.save_trade_results(order_results)
-        pass
-
-    def send_alert(self, message: str):
-        """Send alert message (e.g., via Slack/Telegram)."""
-        logger.warning(f"ALERT: {message}")
-        # try:
-        #     if self.notification_client:
-        #         self.notification_client.send(f"🚨 Autotrade Alert 🚨\n{message}")
-        # except Exception as e:
-        #      logger.error(f"Failed to send alert: {e}")
-        pass # Placeholder
+    def _upsert_trade_results(self, execution_results):
+        logger.info("Upserting execution results to memory...")
+        try:
+            # Let MemoryRAG handle saving the structured results
+            self.memory_rag.save_execution_results(execution_results)
+        except Exception as e:
+             logger.error(f"Failed to upsert execution results: {e}", exc_info=True)
 
     def send_notification(self, message: str, is_error: bool = False):
-         """Send regular notification or briefing."""
-         logger.info(f"NOTIFICATION (Error={is_error}):\n{message[:500]}...")
-         # try:
-         #     if self.notification_client:
-         #         # Format differently for errors vs success briefings?
-         #         title = "🚨 Autotrade Error" if is_error else "📊 Autotrade Daily Briefing"
-         #         self.notification_client.send(f"{title}\n---\n{message}")
-         # except Exception as e:
-         #      logger.error(f"Failed to send notification: {e}")
-         pass # Placeholder
+         """Send notification (e.g., via Discord/Slack)."""
+         level = "ERROR" if is_error else "INFO"
+         log_message = f"NOTIFICATION [{level}]:\n{message[:1000]}..."
+         if is_error:
+             logger.error(log_message)
+         else:
+             logger.info(log_message)
+         
+         # TODO: Implement actual notification sending (e.g., call Discord bot method)
+         # Example: Find the Discord bot instance and call its send method
+         # discord_bot = get_discord_bot_instance() # How to get this?
+         # if discord_bot:
+         #    asyncio.create_task(discord_bot.send_channel_message(message))
+         pass # Placeholder for actual sending
 
 # Example Usage (conceptual)
 if __name__ == "__main__":

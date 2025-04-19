@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     # 모의투자 계좌 사용 여부 (환경 변수 KIS_VIRTUAL_ACCOUNT=true/false 로 설정 가능)
     KIS_VIRTUAL_ACCOUNT: bool = True
 
-    # Discord Bot Token
+    # Discord Bot Configuration
     DISCORD_TOKEN: str
+    DISCORD_ORDER_CONFIRMATION_CHANNEL_ID: int | None = None # 주문 승인 메시지를 보낼 채널 ID (Optional)
 
     # Slack Webhook URL (for alerts)
     SLACK_WEBHOOK: str | None = None # Optional
@@ -92,6 +93,7 @@ if __name__ == "__main__":
     print(f"BASE_URL (Virtual): {settings.KIS_VIRTUAL_URL}")
     print(f"Using Virtual Account: {settings.KIS_VIRTUAL_ACCOUNT}")
     print(f"DISCORD_TOKEN: {settings.DISCORD_TOKEN[:6]}..." if settings.DISCORD_TOKEN else "Not Set")
+    print(f"DISCORD_ORDER_CONFIRMATION_CHANNEL_ID: {settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID}" if settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID else "Not Set")
     print(f"SLACK_WEBHOOK: {settings.SLACK_WEBHOOK[:20]}..." if settings.SLACK_WEBHOOK else "Not Set")
     print(f"DATABASE_URL: {settings.DATABASE_URL}")
     print(f"QDRANT_URL: {settings.QDRANT_URL}")

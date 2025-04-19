@@ -9,15 +9,28 @@ from datetime import datetime, timedelta, timezone
 import uuid
 from openai import OpenAI, AsyncOpenAI, APIError, RateLimitError # OpenAI Library
 import json # For order parsing
+import os
+from enum import Enum, auto
+import aiohttp # Added for making HTTP requests to FastAPI
 
 from src.config import settings
 # Placeholder for backend client - might replace with direct agent calls or specific LLM client
 # from some_backend_client import BackendClient 
 from src.db.models import SessionLocal, TradingSession, SessionLog # DB Models
 from sqlalchemy import select
+# TODO: Need a way to interact back with Orchestrator or FastAPI
+# from some_orchestrator_client import notify_orchestrator_of_decision
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO) # Configured in main execution block
+
+# --- Configuration Check --- 
+if not settings.DISCORD_TOKEN:
+     raise ValueError("DISCORD_TOKEN must be set in the environment variables or .env file.")
+if not settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID:
+     logger.warning("DISCORD_ORDER_CONFIRMATION_CHANNEL_ID is not set. Order confirmation feature will not work.")
+     # Or raise an error if this channel is mandatory
+     # raise ValueError("DISCORD_ORDER_CONFIRMATION_CHANNEL_ID must be set.")
 
 # --- Configuration --- 
 DISCORD_TOKEN = settings.DISCORD_TOKEN
@@ -34,7 +47,15 @@ if settings.OPENAI_API_KEY:
 else:
     logger.warning("OPENAI_API_KEY not set. OpenAI features will be disabled.")
 
-# --- Bot Class --- 
+# --- Constants & Enums ---
+# Channel ID where order confirmations should be sent (Loaded from settings)
+ORDER_CONFIRMATION_CHANNEL_ID = settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID
+
+class DiscordRequestType(Enum):
+    ORDER_CONFIRMATION = auto()
+    GENERAL_NOTIFICATION = auto()
+    ALERT = auto()
+
 class TradingBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=INTENTS) # Prefix not really used for slash commands
@@ -472,14 +493,117 @@ async def trade_command(interaction: Interaction):
              except Exception as followup_e:
                   logger.error(f"Failed to send followup error message: {followup_e}")
 
-# --- Main Execution --- 
-if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        print("Error: DISCORD_TOKEN not found in environment settings.")
-    elif not openai_client and not genai:
-        print("Warning: Neither OpenAI nor Google API keys are set. LLM features will be limited.")
-        # Decide if the bot should run without LLM features or exit
-        # exit()
-        bot.run(DISCORD_TOKEN) # Run anyway, but LLM calls will fail gracefully
+# --- Orchestrator Communication --- 
+# This function is intended to be called by the Orchestrator.
+# In a real-world scenario, this might be part of a class or use a 
+# more robust communication mechanism (like API endpoint, message queue).
+
+async def send_discord_request(request_type: DiscordRequestType, data: dict) -> bool:
+    """Receives requests from Orchestrator and sends messages to Discord.
+    
+    Args:
+        request_type: The type of request (e.g., ORDER_CONFIRMATION).
+        data: The data payload associated with the request.
+        
+    Returns:
+        True if the message was sent successfully (or placeholder success), False otherwise.
+    """
+    logger.info(f"Received request from Orchestrator: Type={request_type}, Data Keys={list(data.keys())}")
+    
+    if request_type == DiscordRequestType.ORDER_CONFIRMATION:
+        request_id = data.get("request_id")
+        orders = data.get("orders")
+        if not request_id or not orders:
+            logger.error("Missing request_id or orders in ORDER_CONFIRMATION data.")
+            return False
+            
+        if not ORDER_CONFIRMATION_CHANNEL_ID:
+             logger.error("Order Confirmation Channel ID is not configured. Cannot send confirmation message.")
+             return False
+                 
+        try:
+            channel = bot.get_channel(ORDER_CONFIRMATION_CHANNEL_ID)
+            if not channel:
+                logger.error(f"Cannot find confirmation channel with ID: {ORDER_CONFIRMATION_CHANNEL_ID}")
+                return False
+
+            # Format the message
+            embed = discord.Embed(
+                title="🚨 Order Confirmation Required 🚨", 
+                description=f"LLM has proposed the following trades. Please review and approve/reject/hold.\nRequest ID: `{request_id}`",
+                color=discord.Color.orange()
+            )
+            
+            order_details = ""
+            total_estimated_value = 0
+            for i, order in enumerate(orders):
+                action = order.get('action', 'N/A').upper()
+                symbol = order.get('symbol', 'N/A')
+                quantity = order.get('quantity', 'N/A')
+                reason = order.get('reason', 'N/A')
+                # TODO: Estimate value based on current price for better user info
+                order_details += f"**{i+1}. {action} {symbol} ({quantity} shares)**\n   Reason: _{reason}_\n"
+                
+            embed.add_field(name="Proposed Orders", value=order_details, inline=False)
+            # embed.add_field(name="Estimated Total Value", value=f"~{total_estimated_value:,.0f} KRW", inline=False)
+            embed.set_footer(text="Please respond within 1 hour.")
+
+            # Create the view with buttons
+            view = ConfirmationView(request_id, orders)
+            
+            # Send the message to the channel
+            await channel.send(embed=embed, view=view)
+            logger.info(f"Sent order confirmation message {request_id} to channel {channel.id}")
+            return True # Indicate message sent
+
+        except discord.errors.Forbidden:
+             logger.error(f"Bot lacks permissions to send messages/embeds/views in channel {ORDER_CONFIRMATION_CHANNEL_ID}.")
+             return False
+        except Exception as e:
+            logger.error(f"Failed to send order confirmation message {request_id}: {e}", exc_info=True)
+            return False
+            
+    elif request_type == DiscordRequestType.GENERAL_NOTIFICATION:
+        message = data.get("message", "No message content.")
+        # TODO: Implement sending general notifications to a specific channel or user
+        logger.info(f"Received general notification to send: {message[:100]}...")
+        # channel = bot.get_channel(NOTIFICATION_CHANNEL_ID) 
+        # if channel: await channel.send(message)
+        pass
+        return True # Placeholder success
+        
+    elif request_type == DiscordRequestType.ALERT:
+        message = data.get("message", "No alert content.")
+        # TODO: Implement sending alerts (maybe tagging specific roles/users)
+        logger.warning(f"Received ALERT to send: {message[:100]}...")
+        # channel = bot.get_channel(ALERT_CHANNEL_ID)
+        # if channel: await channel.send(f"@here **ALERT:** {message}")
+        pass
+        return True # Placeholder success
+        
     else:
-        bot.run(DISCORD_TOKEN) 
+        logger.warning(f"Unknown request type received: {request_type}")
+        return False
+
+# --- Main Execution --- 
+def run_discord_bot():
+    if not settings.DISCORD_TOKEN:
+        logger.error("DISCORD_TOKEN not found in settings. Cannot start bot.")
+        return
+        
+    try:
+        bot.run(settings.DISCORD_TOKEN)
+    except discord.errors.LoginFailure:
+         logger.error("Failed to log in to Discord. Check your DISCORD_TOKEN.")
+    except Exception as e:
+         logger.error(f"An error occurred while running the Discord bot: {e}", exc_info=True)
+
+if __name__ == "__main__":
+    # Configure logging for the bot
+    logging.basicConfig(level=logging.INFO, 
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    # Optional: Lower discord lib logging level if too verbose
+    # logging.getLogger('discord').setLevel(logging.WARNING)
+    
+    print("Attempting to run the Discord bot...")
+    run_discord_bot() 
