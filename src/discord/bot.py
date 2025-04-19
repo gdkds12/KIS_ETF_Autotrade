@@ -266,7 +266,17 @@ class TradingBot(commands.Bot):
                     logger.info(f"Command {fn_name} executed. Result: {str(fn_result)[:100]}...")
                 except Exception as exec_e:
                     logger.error(f"Error executing command {fn_name}: {exec_e}", exc_info=True)
-                    fn_result = {"error": f"Failed to execute command {fn_name}: {str(exec_e)}"}
+                    # 오류 발생 시, 두 번째 LLM 호출 대신 디버그 메시지 바로 반환
+                    debug = (
+                        f"```DEBUG\n"
+                        f"ORCHESTRATOR set: {registry.ORCHESTRATOR is not None}\n"
+                        f"Function Call Failed: {fn_name}({fn_args})\n"
+                        f"Error: {type(exec_e).__name__}: {exec_e}\n"
+                        f"```"
+                    )
+                    response_text = f"(내부 명령 '{fn_name}' 실행 중 오류 발생)\n{debug}"
+                    # 함수 실행 오류 시, 바로 오류 메시지와 None 반환
+                    return response_text, None
 
                 # -----------------------------------------
                 #   2nd completion - Send result back to LLM
