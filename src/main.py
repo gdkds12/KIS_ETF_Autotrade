@@ -244,3 +244,5 @@ async def trigger_cycle_endpoint(background_tasks: BackgroundTasks, orchestrator
 if __name__ == "__main__":
     # Note: Running Uvicorn directly might not be ideal for managing dependencies
     #       and lifespans correctly compared to using `uvicorn src.main:app`
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
