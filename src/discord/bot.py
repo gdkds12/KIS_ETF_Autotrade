@@ -177,10 +177,10 @@ class TradingBot(commands.Bot):
          finally:
               db.close()
               
-    async def get_openai_response(self, session_info: dict, user_message: str) -> tuple[str, dict | None]:
+    async def get_openai_response(self, session_info: dict, user_message: str) -> tuple[str, dict | None, str]:
         """Get response from OpenAI main tier model, managing conversation history and function calls."""
         if not openai_client:
-            return "(죄송합니다, OpenAI API가 설정되지 않아 응답할 수 없습니다.)", None
+            return "(죄송합니다, OpenAI API가 설정되지 않아 응답할 수 없습니다.)", None, "(Debug info not generated)"
 
         llm_session_id = session_info['llm_session_id']
         message_history = session_info.get('message_history', [])
@@ -207,6 +207,7 @@ class TradingBot(commands.Bot):
         
         response_text = "(오류 발생)"
         suggested_order = None
+        debug_info = "(Debug info not generated)" # Default debug info
 
         try:
             logger.info(f"Sending request to OpenAI model: {settings.LLM_MAIN_TIER_MODEL} for session {llm_session_id} (with function calling)")
@@ -226,15 +227,21 @@ class TradingBot(commands.Bot):
             choice = completion.choices[0]
             message_from_llm = choice.message
 
-            # --- DEBUG LOGGING ---
-            logger.debug(f"LLM finish_reason: {choice.finish_reason}")
-            if choice.finish_reason == "function_call":
-                fn_name = choice.message.function_call.name
-                fn_args = choice.message.function_call.arguments
-                logger.debug(f"Function call requested: {fn_name}({fn_args})")
-            else:
-                logger.debug(f"LLM direct response: {choice.message.content}")
-            # -----------------------
+            # --- DEBUG INFO GENERATION --- 
+            fc = None
+            if choice.finish_reason == 'function_call':
+                fc = {
+                    "name": choice.message.function_call.name,
+                    "arguments": choice.message.function_call.arguments
+                }
+            debug_info = json.dumps({
+                "finish_reason": choice.finish_reason,
+                "function_call": fc,
+                "raw_content": choice.message.content or "",
+                "orchestrator_set": registry.ORCHESTRATOR is not None # Include orchestrator status
+            }, ensure_ascii=False, indent=2)
+            logger.debug(f"Generated Debug Info: {debug_info}")
+            # ---------------------------
 
             # 4️⃣ Check if a function call was requested
             if choice.finish_reason != 'function_call':
@@ -263,17 +270,17 @@ class TradingBot(commands.Bot):
                     logger.info(f"Command {fn_name} executed. Result: {str(fn_result)[:100]}...")
                 except Exception as exec_e:
                     logger.error(f"Error executing command {fn_name}: {exec_e}", exc_info=True)
-                    # 오류 발생 시, 두 번째 LLM 호출 대신 디버그 메시지 바로 반환
-                    debug = (
+                    # 오류 발생 시, 디버그 정보 업데이트 및 바로 반환
+                    error_debug = (
                         f"```DEBUG\n"
                         f"ORCHESTRATOR set: {registry.ORCHESTRATOR is not None}\n"
                         f"Function Call Failed: {fn_name}({fn_args})\n"
                         f"Error: {type(exec_e).__name__}: {exec_e}\n"
                         f"```"
                     )
-                    response_text = f"(내부 명령 '{fn_name}' 실행 중 오류 발생)\n{debug}"
-                    # 함수 실행 오류 시, 바로 오류 메시지와 None 반환
-                    return response_text, None
+                    response_text = f"(내부 명령 '{fn_name}' 실행 중 오류 발생)"
+                    # Return the error message and the specific error debug info
+                    return response_text, None, error_debug # Return 3 values
 
                 # -----------------------------------------
                 #   2nd completion - Send result back to LLM
@@ -337,7 +344,8 @@ class TradingBot(commands.Bot):
              logger.error(f"Unexpected error interacting with OpenAI or executing function: {e}", exc_info=True)
              response_text = "(AI 응답 생성 또는 내부 명령 실행 중 오류가 발생했습니다.)"
              
-        return response_text, suggested_order
+        # Return final response, order, and debug info
+        return response_text, suggested_order, debug_info # Return 3 values
 
     async def on_message(self, message: Message):
         # Ignore messages from the bot itself
@@ -362,7 +370,8 @@ class TradingBot(commands.Bot):
             # --- LLM Interaction --- 
             async with message.channel.typing():
                 try:
-                    response_text, suggested_order = await self.get_openai_response(session_info, message.content)
+                    # LLM 호출 및 디버그 정보까지 함께 돌려받도록 시그니처 변경
+                    response_text, suggested_order, debug_info = await self.get_openai_response(session_info, message.content)
                     
                     # Log AI response to DB
                     await self.log_message_to_db(
@@ -377,7 +386,26 @@ class TradingBot(commands.Bot):
                     if suggested_order:
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
                     
-                    await message.channel.send(response_text, view=view)
+                    # 실제 답변과 함께 debug_info도 출력
+                    debug_msg_formatted = f"\n\n```DEBUG\n{debug_info}\n```"
+                    # Check length before sending to avoid exceeding Discord limit
+                    final_message = response_text
+                    if len(response_text) + len(debug_msg_formatted) <= 2000:
+                        final_message += debug_msg_formatted
+                    else:
+                        # If too long, send debug info separately or truncate response
+                        logger.warning(f"Combined response and debug info too long for Discord. Sending separately or truncating. Lengths: Response={len(response_text)}, Debug={len(debug_msg_formatted)}")
+                        # Option 1: Send separately (might be rate limited)
+                        # await message.channel.send(response_text, view=view)
+                        # await message.channel.send(debug_msg_formatted)
+                        # Option 2: Truncate response text (simpler)
+                        available_space = 2000 - len(debug_msg_formatted) - 10 # a bit of buffer
+                        if available_space > 100: # Only truncate if reasonable space left
+                           final_message = response_text[:available_space] + "... (truncated)" + debug_msg_formatted
+                        else: # If debug info itself is too long, just send response
+                            final_message = response_text[:1990] + "... (truncated)" 
+                            
+                    await message.channel.send(final_message, view=view)
                     logger.info(f"[Session:{message.channel.id}] Sent response to user.")
 
                 except Exception as e:
@@ -682,6 +710,43 @@ async def run_cycle_command(interaction: Interaction):
     except Exception as e:
         logger.error(f"Error triggering orchestrator cycle: {e}", exc_info=True)
         await interaction.followup.send(f"❌ 사이클 트리거 중 예외 발생: {e}", ephemeral=True)
+
+# --- NEW DEBUG COMMAND --- 
+@bot.tree.command(name="debug_balance", description="(디버그) 직접 계좌 잔고 JSON 반환")
+async def debug_balance(interaction: Interaction):
+    """Directly calls the registered get_balance command for debugging."""
+    logger.info(f"Received /debug_balance command from {interaction.user.id}")
+    # 직접 registry에 등록된 get_balance 호출
+    from src.utils.registry import COMMANDS, ORCHESTRATOR # Import ORCHESTRATOR as well
+    
+    # Check if orchestrator is ready
+    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'broker'):
+        await interaction.response.send_message(
+            "오류: Orchestrator 또는 Broker가 아직 준비되지 않았습니다.",
+            ephemeral=True
+        )
+        return
+        
+    try:
+        # Execute the command wrapper directly
+        result = COMMANDS['get_balance']()
+        await interaction.response.send_message(
+            f"```json\n{json.dumps(result, ensure_ascii=False, indent=2)}\n```",
+            ephemeral=True
+        )
+    except KeyError:
+        logger.error("Command 'get_balance' not found in registry.")
+        await interaction.response.send_message(
+            "오류: 'get_balance' 명령어를 레지스트리에서 찾을 수 없습니다.",
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error executing debug_balance command: {e}", exc_info=True)
+        await interaction.response.send_message(
+            f"명령어 실행 중 오류 발생: ```{type(e).__name__}: {e}```",
+            ephemeral=True
+        )
+# -------------------------
 
 # --- Orchestrator Communication --- 
 # This function is intended to be called by the Orchestrator.
