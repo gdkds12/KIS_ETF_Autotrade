@@ -193,15 +193,17 @@ class TradingBot(commands.Bot):
         message_history.append({"role": "user", "content": user_message})
         
         system_prompt = (
-            "당신은 금융 도우미 AI입니다. 필요한 경우 아래 내부 명령을 호출해 실시간 데이터를 가져오세요:\n"
+            "당신은 금융 도우미 AI입니다. 사용자 질문 의도에 따라 적합한 내부 명령을 호출해 실시간 데이터나 정보를 가져오세요:\n"
             "- get_balance() → 계좌 잔고 조회\n"
             "- get_positions() → 보유 포지션 조회\n"
             "- get_historical_data(symbol, timeframe, start_date, end_date, period) → 과거 시세(일·주·월봉)\n"
             "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → 현금 주문 실행\n"
-            "- get_market_summary(query) → 시장 동향 요약 (query 필요)\n"
             "- get_quote(symbol) → 국내 주식 실시간 시세 조회\n"
             "- get_overseas_trading_status() → 해외 주식 거래 가능 여부 조회\n"
-            "- search_web(query) → 웹 검색\n"
+            "- get_market_summary(query) → Finnhub 기반 시장 동향 요약 (ETF·지수 등 뉴스성 요약)\n"
+            "- search_news(query) → Finnhub API를 이용한 최신 뉴스 리스트 검색 (시장 동향, 기업 이슈 등)\n"
+            "- search_web(query) → 일반 웹 검색(SerpAPI)으로 기타 정보·심층 분석 검색\n"
+            "— **뉴스·시장 동향 분석** 요청에는 `get_market_summary` 혹은 `search_news`를, **특정 사건·정책·세부 정보** 조사에는 `search_web`을 사용하세요.\n"
             "모든 답변은 한국어로 제공하세요."
         )
 

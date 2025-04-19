@@ -81,12 +81,12 @@ def get_market_summary(query: str) -> str:
 
 @command
 def search_news(query: str) -> list:
-    """Finnhub로 관련 뉴스 검색 (query는 심볼 또는 키워드)."""
-    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'info_crawler'):
+    """Finnhub 기반 최신 뉴스 검색"""
+    if ORCHESTRATOR is None:
         return []
     # Decide whether to use query as symbol or rely on general category search in the method
     # Passing query directly; the method can decide how to use it.
-    return ORCHESTRATOR.info_crawler.search_news(query=query, category='general') # Example: use query for symbol if needed, else general
+    return ORCHESTRATOR.info_crawler.search_news(query=query)
 
 @command
 def search_symbols(query: str) -> list:
@@ -96,20 +96,11 @@ def search_symbols(query: str) -> list:
     return ORCHESTRATOR.info_crawler.search_symbols(query)
 
 @command
-def search_web(query: str) -> str:
-    """Searches Finnhub for the given query.
-
-    Args:
-        query: The search query.
-
-    Returns:
-        Search results from Finnhub.
-    """
-    # Ensure Orchestrator and finnhub client are available
-    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'finnhub'):
-        return "(Orchestrator or Finnhub client not ready)"
-    # Execute Finnhub search via Orchestrator
-    return ORCHESTRATOR.finnhub.search(query=query)
+def search_web(query: str) -> list:
+    """일반 웹 검색 결과를 SerpAPI를 통해 가져옵니다."""
+    if ORCHESTRATOR is None:
+        return []
+    return ORCHESTRATOR.info_crawler.search_web(query=query)
 
 @command
 def get_quote(symbol: str) -> str:
