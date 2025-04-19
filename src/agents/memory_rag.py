@@ -90,7 +90,8 @@ class MemoryRAG:
         try:
             logger.info(f"Connecting to Qdrant at {self.qdrant_uri}...")
             client = QdrantClient(url=self.qdrant_uri, api_key=self.qdrant_api_key, timeout=10)
-            client.health_check()
+            # 연결 테스트: collections 가져오기
+            _ = client.get_collections()
             logger.info("Successfully connected to Qdrant.")
             return client
         except Exception as e:

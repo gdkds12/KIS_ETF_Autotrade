@@ -70,16 +70,17 @@ async def lifespan(app: FastAPI):
         # --- Initialize Qdrant Client --- 
         try:
             qdrant_client = QdrantClient(
-                url=settings.QDRANT_URL, 
-                api_key=settings.QDRANT_API_KEY, 
+                url=settings.QDRANT_URL,
+                api_key=settings.QDRANT_API_KEY,
                 timeout=10
             )
-            qdrant_client.health_check()
+            # 연결 테스트: collections 가져오기
+            _ = qdrant_client.get_collections()
             app_state['qdrant_client'] = qdrant_client
             logger.info("Qdrant client initialized and connected.")
         except Exception as e:
-             logger.error(f"Failed to initialize Qdrant client: {e}. Orchestrator RAG features might fail.", exc_info=True)
-             app_state['qdrant_client'] = None # Ensure key exists even if init fails
+            logger.error(f"Failed to initialize Qdrant client: {e}. Orchestrator RAG features might fail.", exc_info=True)
+            app_state['qdrant_client'] = None
 
         # --- Initialize Orchestrator --- 
         # Pass dependencies: broker, db_session_factory, qdrant_client
