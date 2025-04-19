@@ -234,15 +234,15 @@ class KisBroker:
         params = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
-            "AFHR_FLASS_YN": "N", # 시간외단일가 여부
-            "OFL_YN": "", # 공란
-            "INQR_DVSN": "01", # 조회구분 (01: 대출일별, 02: 종목별)
-            "UNPR_DVSN": "01", # 단가구분
+            "AFHR_FLPR_YN": "N",    # 시간외단일가 여부 (올바른 필드명)
+            "OFL_YN": "",           # 공란
+            "INQR_DVSN": "01",      # 조회구분 (01: 대출일별, 02: 종목별)
+            "UNPR_DVSN": "01",      # 단가구분
             "FUND_STTL_ICLD_YN": "N", # 펀드결제분 포함 여부
             "FNCG_AMT_AUTO_RDPT_YN": "N", # 융자금액 자동상환 여부
-            "PRCS_DVSN": "00", # 처리구분 (00: 전일매매포함)
-            "CTX_AREA_FK100": "", # 연속조회검색조건
-            "CTX_AREA_NK100": "" # 연속조회키
+            "PRCS_DVSN": "00",      # 처리구분 (00: 전일매매포함)
+            "CTX_AREA_FK100": "",   # 연속조회검색조건
+            "CTX_AREA_NK100": ""    # 연속조회키
         }
         try:
             logger.info("Requesting account balance...")
