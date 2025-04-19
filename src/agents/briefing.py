@@ -12,14 +12,13 @@ logger = logging.getLogger(__name__)
 briefing_llm_model = None
 if settings.GOOGLE_API_KEY and settings.LLM_LIGHTWEIGHT_TIER_MODEL:
     try:
-        if not genai.is_configured(): # Configure if not already done by other agents
-             genai.configure(api_key=settings.GOOGLE_API_KEY)
+        genai.configure(api_key=settings.GOOGLE_API_KEY)
         briefing_llm_model = genai.GenerativeModel(settings.LLM_LIGHTWEIGHT_TIER_MODEL)
-        logger.info(f"BriefingAgent initialized with Gemini model: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
+        logger.info(f"BriefingAgent initialized with LLM: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
     except Exception as e:
-         logger.error(f"Failed to initialize Gemini model for BriefingAgent: {e}", exc_info=True)
+         logger.error(f"Failed to initialize LLM for BriefingAgent: {e}", exc_info=True)
 else:
-    logger.warning("Google API Key or Lightweight LLM model not set. Briefing agent will generate basic report only.")
+    logger.warning("GOOGLE_API_KEY or LLM_LIGHTWEIGHT_TIER_MODEL not set. Briefing will be basic.")
 
 class BriefingAgent:
     def __init__(self):

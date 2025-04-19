@@ -1,4 +1,4 @@
-# Dag 관리·에이전트 호출 흐름 
+# Dag 관리·에이전트 호출 흐름
 
 import logging
 import time
@@ -15,7 +15,8 @@ from src.config import settings
 from src.brokers.kis import KisBroker, KisBrokerError
 from src.agents.info_crawler import InfoCrawler
 from src.agents.memory_rag import MemoryRAG
-from src.agents.strategy import TradingStrategy
+# TradingStrategy 모듈 사용이 필요없다면 import 삭제
+# from src.agents.strategy import TradingStrategy # <- 이 줄 삭제됨
 from src.agents.risk_guard import RiskGuard
 from src.agents.briefing import BriefingAgent
 # from src.db.models import SessionLocal # If direct DB session needed here
@@ -25,7 +26,7 @@ import asyncio # For potential async operations
 
 logger = logging.getLogger(__name__)
 
-# --- Helper for Retrying Broker Operations --- 
+# --- Helper for Retrying Broker Operations ---
 # Define which KIS errors might be worth retrying (e.g., temporary network issues, maybe rate limits)
 def is_retryable_kis_error(exception):
     if isinstance(exception, KisBrokerError):
@@ -34,7 +35,7 @@ def is_retryable_kis_error(exception):
         #     return True
         # if exception.response_data and exception.response_data.get('msg_cd') == 'APBK08040': # Rate limit
         #      logger.warning("KIS Rate limit detected, retrying...")
-        #      return True 
+        #      return True
         # For now, let's retry most KisBrokerErrors except auth failures maybe
         return True # Be cautious with retries
     return False # Don't retry other exception types by default
@@ -63,10 +64,25 @@ class Orchestrator:
         # Initialize LLM Model (Gemini Main Tier)
         if settings.GOOGLE_API_KEY:
             try:
-                if not genai.is_configured():
-                    genai.configure(api_key=settings.GOOGLE_API_KEY)
+                # Check if already configured (optional but good practice)
+                # Assuming google.generativeai has a way to check, otherwise remove check
+                # For example, maybe just re-configure every time or use a flag
+                # if not genai.is_configured(): # <- This caused the original error, so removing or adapting
+                #    genai.configure(api_key=settings.GOOGLE_API_KEY)
+
+                # Safely configure (re-configuring is often safe)
+                genai.configure(api_key=settings.GOOGLE_API_KEY)
+
                 self.llm_model = genai.GenerativeModel(settings.LLM_MAIN_TIER_MODEL) # Use main tier for orchestration
                 logger.info(f"Orchestrator initialized with Gemini model: {settings.LLM_MAIN_TIER_MODEL}")
+            except AttributeError:
+                 logger.warning("The installed google.generativeai library might not have 'is_configured' or behaves differently. Attempting configuration anyway.")
+                 try:
+                     genai.configure(api_key=settings.GOOGLE_API_KEY)
+                     self.llm_model = genai.GenerativeModel(settings.LLM_MAIN_TIER_MODEL)
+                     logger.info(f"Orchestrator initialized with Gemini model: {settings.LLM_MAIN_TIER_MODEL}")
+                 except Exception as e_inner:
+                      logger.error(f"Failed to initialize Gemini model for Orchestrator after fallback: {e_inner}", exc_info=True)
             except Exception as e:
                 logger.error(f"Failed to initialize Gemini model for Orchestrator: {e}", exc_info=True)
                 # Consider fallback or raising an error depending on criticality
@@ -169,10 +185,10 @@ class Orchestrator:
 
         Example JSON Output:
         [
-          {"action_type": "sell", "symbol": "069500", "quantity": 5, "reason": "Stop-loss triggered based on yesterday's drop"},
-          {"action_type": "buy", "symbol": "229200", "quantity": 10, "reason": "Positive momentum signal and favorable market summary"},
-          {"action_type": "hold", "reason": "Market conditions are uncertain, wait for clearer signals."},
-          {"action_type": "briefing", "message": "Observed increased volatility in the energy sector ETFs."}
+          {{"action_type": "sell", "symbol": "069500", "quantity": 5, "reason": "Stop-loss triggered based on yesterday's drop"}},
+          {{"action_type": "buy", "symbol": "229200", "quantity": 10, "reason": "Positive momentum signal and favorable market summary"}},
+          {{"action_type": "hold", "reason": "Market conditions are uncertain, wait for clearer signals."}},
+          {{"action_type": "briefing", "message": "Observed increased volatility in the energy sector ETFs."}}
         ]
 
         If no trades are recommended, return a list containing only a 'hold' or 'briefing' action, or an empty list [].
@@ -186,7 +202,7 @@ class Orchestrator:
             # Configure safety settings if needed
             safety_settings = {} # Adjust as necessary
             response = self.llm_model.generate_content(prompt, safety_settings=safety_settings)
-            
+
             # Extract JSON part from the response (LLMs sometimes add extra text)
             response_text = response.text.strip()
             json_start = response_text.find('[')
@@ -254,12 +270,12 @@ class Orchestrator:
             confirmation_result = self._request_user_confirmation(validated_orders)
             execution_results.append(confirmation_result) # Record the request attempt
 
-            # --- IMPORTANT --- 
-            # Actual order execution (_execute_orders) should happen *after* receiving 
+            # --- IMPORTANT ---
+            # Actual order execution (_execute_orders) should happen *after* receiving
             # user approval (e.g., 'yes') from Discord.
             # This requires a mechanism for the Discord bot to communicate the user's
             # decision back to the Orchestrator (e.g., callback, API call, message queue).
-            # Since that mechanism is not yet implemented, we are *NOT* calling 
+            # Since that mechanism is not yet implemented, we are *NOT* calling
             # self._execute_orders here.
             #
             # Conceptual flow after user clicks 'Yes':
@@ -294,8 +310,8 @@ class Orchestrator:
         }
 
         try:
-            # --- TODO: Implement actual communication with Discord Bot --- 
-            # This function (`send_discord_request`) needs to be implemented in `src/discord/bot.py` 
+            # --- TODO: Implement actual communication with Discord Bot ---
+            # This function (`send_discord_request`) needs to be implemented in `src/discord/bot.py`
             # or a shared communication module. It should handle:
             # - Formatting the orders into a user-friendly message (e.g., Embed).
             # - Adding Yes/No/Hold buttons.
@@ -305,7 +321,7 @@ class Orchestrator:
             # success = await send_discord_request(type=DiscordRequestType.ORDER_CONFIRMATION, data=payload)
             success = True # Placeholder: Assume request sent successfully
             # -----------------------------------------------------------------
-            
+
             if success:
                 logger.info(f"Successfully sent confirmation request {request_id} to Discord (or placeholder success).")
                 return {
@@ -387,14 +403,14 @@ class Orchestrator:
         logger.info("Skipping explicit memory summarization step in LLM-driven cycle.")
         pass
 
-    @kis_retry_decorator 
+    @kis_retry_decorator
     def _fetch_market_data(self):
         logger.info("Fetching market data...")
         # TODO: Implement market data fetching (e.g., using broker)
         # return self.broker.get_quotes([...]) # 필요한 종목 리스트
         market_data = {}
         # TODO: Get target symbols from strategy or config
-        symbols = self.strategy.target_symbols 
+        symbols = settings.TARGET_SYMBOLS # <- 수정된 부분
         for symbol in symbols:
             try:
                 # This call within the loop might need individual retries or batching
@@ -450,13 +466,13 @@ class Orchestrator:
                 price = order['price'] # Should be 0 for market order from LLM plan
                 order_type = "01" if price == 0 else "00" # 01: 시장가, 00: 지정가
                 buy_sell_code = "02" if order['action'] == 'buy' else "01" # 02: 매수, 01: 매도
-                
+
                 # Execute the order using the broker
                 kis_response_output = self.broker.order_cash(
-                    symbol=symbol, 
-                    quantity=quantity, 
-                    price=price, 
-                    order_type=order_type, 
+                    symbol=symbol,
+                    quantity=quantity,
+                    price=price,
+                    order_type=order_type,
                     buy_sell_code=buy_sell_code
                 )
                 # Assume success if no exception
@@ -472,10 +488,10 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Unexpected error executing {action_desc}: {e}", exc_info=True)
                 order_result = {"action_type": order['action'], "status": "error", "detail": f"Unexpected error during {action_desc}: {e}", "order": order}
-            
+
             if order_result:
                 results.append(order_result)
-                
+
         logger.info(f"Finished executing orders. Results: {len(results)} recorded.")
         return results
 
@@ -504,7 +520,7 @@ class Orchestrator:
              logger.error(log_message)
          else:
              logger.info(log_message)
-         
+
          # TODO: Implement actual notification sending (e.g., call Discord bot method)
          # Example: Find the Discord bot instance and call its send method
          # discord_bot = get_discord_bot_instance() # How to get this?
@@ -521,4 +537,4 @@ if __name__ == "__main__":
     # mock_qdrant = ...
     # orchestrator = Orchestrator(mock_broker, mock_db, mock_qdrant)
     # orchestrator.run_daily_cycle()
-    pass 
+    pass

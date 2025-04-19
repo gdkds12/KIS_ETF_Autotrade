@@ -13,12 +13,12 @@ logger = logging.getLogger(__name__)
 info_llm_model = None
 if settings.GOOGLE_API_KEY and settings.LLM_LIGHTWEIGHT_TIER_MODEL:
     try:
-        if not genai.is_configured():
-             genai.configure(api_key=settings.GOOGLE_API_KEY)
+        # is_configured() 체크 대신 무조건 설정
+        genai.configure(api_key=settings.GOOGLE_API_KEY)
         info_llm_model = genai.GenerativeModel(settings.LLM_LIGHTWEIGHT_TIER_MODEL)
-        logger.info(f"InfoCrawler initialized with Gemini model: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
+        logger.info(f"InfoCrawler initialized with optional LLM: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
     except Exception as e:
-         logger.error(f"Failed to initialize Gemini model for InfoCrawler: {e}", exc_info=True)
+        logger.warning(f"Failed to initialize optional LLM for InfoCrawler: {e}. Summarization might be basic.")
 else:
     logger.warning("Google API Key or Lightweight LLM model not set. InfoCrawler LLM summary will be basic.")
 
