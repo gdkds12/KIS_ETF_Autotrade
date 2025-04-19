@@ -46,20 +46,24 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
 
-    # Tier별 모델 이름 정의
-    LLM_HIGHEST_TIER_MODEL: str = "gpt-3.5-turbo" # O3 대응
-    LLM_MAIN_TIER_MODEL: str = "gpt-4o-mini"       # O4-mini 대응
-    LLM_LIGHTWEIGHT_TIER_MODEL: str = "gemini-1.5-flash-latest" # Gemini Flash 대응
-    # LLM_MAIN_TIER_HIGH_MODEL: str = "gpt-4o" # O4-mini-high 대응 (필요시 활성화)
+    # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
+    LLM_MAIN_TIER_MODEL: str = "gemini-2.5-pro-preview-03-25"       # <<< 변경: 주요 추론용 (Orchestrator)
+    LLM_LIGHTWEIGHT_TIER_MODEL: str = "gemini-2.5-flash-preview-04-17" # <<< 변경: 가벼운 작업용 (요약, 크롤링 등)
+    # LLM_HIGHEST_TIER_MODEL: str = "gpt-4o" # 예비 또는 더 높은 성능 필요시 (OpenAI)
+    # LLM_ALTERNATIVE_MODEL: str = "gpt-3.5-turbo" # 다른 옵션 (OpenAI)
     
     # Embedding Model (Example)
-    EMBEDDING_MODEL_NAME: str = "sentence-transformers/all-MiniLM-L6-v2" # 예시
-    VECTOR_DIM: int = 384 # 위 모델 기준 (실제 모델에 맞게 조정 필요)
+    EMBEDDING_MODEL_NAME: str = "text-embedding-3-large" # <<< 변경: OpenAI 최신 대형 모델
+    VECTOR_DIM: int = 3072 # <<< 변경: text-embedding-3-large 기본 차원
 
     # Trading Configuration
-    INVESTMENT_AMOUNT: float = 1_000_000 # 총 투자금 (예: 100만원)
-    MAX_DAILY_ORDERS: int = 10
-    STOP_LOSS_PERCENT: float = 0.10 # 10% 손절 (예시)
+    INVESTMENT_AMOUNT: float = 1_000_000 # 총 투자 참고 금액 (LLM Context 용)
+    MAX_DAILY_ORDERS: int = 20      # RiskGuard 일일 주문 검증 횟수 한도
+    STOP_LOSS_PERCENT: float = 0.07 # 7% 고정 비율 손절 (ATR 손절 미사용 시)
+    TARGET_SYMBOLS: list[str] = ["069500", "229200", "114800"] # 기본 분석/거래 대상 ETF
+    ORDER_INTERVAL_SECONDS: float = 0.2 # KIS 주문 API 호출 간 최소 간격 (초)
+    CYCLE_INTERVAL_MINUTES: int = 15   # Orchestrator 자동 실행 간격 (분) - 실제 스케줄링은 외부에서 관리될 수 있음
+    API_ERROR_BACKOFF_SECONDS: int = 5   # KIS API 오류 발생 시 재시도 전 대기 시간 (초)
 
     # Model configuration
     model_config = SettingsConfigDict(
@@ -99,9 +103,16 @@ if __name__ == "__main__":
     print(f"QDRANT_URL: {settings.QDRANT_URL}")
     print(f"OPENAI_API_KEY Set: {bool(settings.OPENAI_API_KEY)}")
     print(f"GOOGLE_API_KEY Set: {bool(settings.GOOGLE_API_KEY)}")
-    print(f"LLM Highest Tier: {settings.LLM_HIGHEST_TIER_MODEL}")
-    print(f"LLM Main Tier: {settings.LLM_MAIN_TIER_MODEL}")
-    print(f"LLM Lightweight Tier: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
+    # Print updated model names
+    print(f"LLM Main Tier (Reasoning): {settings.LLM_MAIN_TIER_MODEL}")
+    print(f"LLM Lightweight Tier (Summarization, etc.): {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
+    # print(f"LLM Highest Tier (Alternative): {settings.LLM_HIGHEST_TIER_MODEL}")
     print(f"EMBEDDING_MODEL_NAME: {settings.EMBEDDING_MODEL_NAME}")
     print(f"VECTOR_DIM: {settings.VECTOR_DIM}")
-    print(f"INVESTMENT_AMOUNT: {settings.INVESTMENT_AMOUNT}") 
+    print(f"INVESTMENT_AMOUNT: {settings.INVESTMENT_AMOUNT}")
+    print(f"MAX_DAILY_ORDERS: {settings.MAX_DAILY_ORDERS}")
+    print(f"STOP_LOSS_PERCENT: {settings.STOP_LOSS_PERCENT}")
+    print(f"TARGET_SYMBOLS: {settings.TARGET_SYMBOLS}")
+    print(f"ORDER_INTERVAL_SECONDS: {settings.ORDER_INTERVAL_SECONDS}")
+    print(f"CYCLE_INTERVAL_MINUTES: {settings.CYCLE_INTERVAL_MINUTES}")
+    print(f"API_ERROR_BACKOFF_SECONDS: {settings.API_ERROR_BACKOFF_SECONDS}") 
