@@ -57,6 +57,13 @@ else:
 # Channel ID where order confirmations should be sent (Loaded from settings)
 ORDER_CONFIRMATION_CHANNEL_ID = settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID
 
+# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
+def get_token_param(model: str, limit: int) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {"max_completion_tokens": limit}
+    else:
+        return {"max_tokens": limit}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Embed 생성 유틸 (임포트 직후에 위치해야 on_message 등에서 인식됩니다)
 def make_summary_embed(title: str, summary: str, footer: str = None) -> Embed:
@@ -250,7 +257,7 @@ class TradingBot(commands.Bot):
                 functions=functions, # Pass function specs
                 function_call="auto", # Let the model decide
                 temperature=0.7,
-                max_completion_tokens=1000,
+                **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
             )
 
             choice = completion.choices[0]
@@ -340,7 +347,7 @@ class TradingBot(commands.Bot):
                         },
                     ],
                     temperature=0.7,
-                    max_completion_tokens=1000,
+                    **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
                     # NOTE: Do not pass functions here, we want a direct answer now
                 )
                 response_text = second_completion.choices[0].message.content

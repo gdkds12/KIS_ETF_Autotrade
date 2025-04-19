@@ -11,6 +11,13 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
+def get_token_param(model: str, limit: int) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {"max_completion_tokens": limit}
+    else:
+        return {"max_tokens": limit}
+
 # --- OpenAI 모델 초기화 (InfoCrawler 용) --- 
 if settings.OPENAI_API_KEY:
     # Check if openai.api_key is already set or needs setting
@@ -149,7 +156,7 @@ class InfoCrawler:
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.3,
-                max_completion_tokens=500,
+                **get_token_param(settings.LLM_MARKET_TIER_MODEL, 500),
             )
             summary = resp.choices[0].message.content.strip()
             logger.info("Received summary from OpenAI.")

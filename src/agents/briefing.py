@@ -8,6 +8,13 @@ import json # To potentially parse complex details if needed
 
 logger = logging.getLogger(__name__)
 
+# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
+def get_token_param(model: str, limit: int) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {"max_completion_tokens": limit}
+    else:
+        return {"max_tokens": limit}
+
 # --- OpenAI 모델 초기화 (BriefingAgent 용) ---
 # Rely on global setting of openai.api_key done elsewhere
 if settings.OPENAI_API_KEY:
@@ -71,7 +78,7 @@ class BriefingAgent:
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
                 messages=messages,
                 temperature=0.5,
-                max_completion_tokens=300 # Adjust token limit
+                **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 300)
             )
             llm_summary = resp.choices[0].message.content.strip()
             logger.info("Successfully received summary from OpenAI for briefing.")

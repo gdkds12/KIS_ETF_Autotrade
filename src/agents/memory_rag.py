@@ -21,6 +21,13 @@ from src.db.models import TradingSession, SessionLog # DB 모델 임포트
 
 logger = logging.getLogger(__name__)
 
+# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
+def get_token_param(model: str, limit: int) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {"max_completion_tokens": limit}
+    else:
+        return {"max_tokens": limit}
+
 # --- OpenAI 모델 초기화 (MemoryRAG 용) ---
 # Rely on global setting of openai.api_key done elsewhere (e.g., orchestrator, bot setup)
 if settings.OPENAI_API_KEY:
@@ -54,7 +61,7 @@ def summarize_text(text: str, topic: str = None) -> str:
                 {"role": "user", "content": user_content}
             ],
             temperature=0.3,
-            max_completion_tokens=300,
+            **get_token_param(settings.LLM_SUMMARY_TIER_MODEL, 300),
         )
         summary = resp.choices[0].message.content.strip()
         logger.info("Successfully received summary from OpenAI.")

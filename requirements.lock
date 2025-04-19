@@ -21,7 +21,7 @@ aiohttp>=3.9.0,<3.10.0 # For discord bot http requests
 finnhub-python>=2.4.0,<2.5.0 # Remove Finnhub client library
 
 # LLM Libraries
-openai>=1.16.0,<1.17.0
+openai>=1.17.0
 # google-generativeai>=0.5.0,<0.6.0
 # transformers>=4.39.0,<4.40.0
 # torch>=2.2.0,<2.3.0 # Dependency for some transformers models

@@ -33,6 +33,13 @@ from src.utils.registry import command, COMMANDS
 
 logger = logging.getLogger(__name__)
 
+# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
+def get_token_param(model: str, limit: int) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {"max_completion_tokens": limit}
+    else:
+        return {"max_tokens": limit}
+
 # --- Helper for Retrying Broker Operations ---
 # Define which KIS errors might be worth retrying (e.g., temporary network issues, maybe rate limits)
 def is_retryable_kis_error(exception):
@@ -284,7 +291,7 @@ class Orchestrator:
                 model=self.llm_model_name, # Use stored model name
                 messages=messages,
                 temperature=0.7,
-                max_completion_tokens=800, # Adjust as needed
+                **get_token_param(self.llm_model_name, 800),
                 # Consider response_format for JSON mode if using compatible models
                 # response_format={"type": "json_object"} 
             )
