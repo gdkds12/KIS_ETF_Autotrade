@@ -25,7 +25,6 @@ from qdrant_client import QdrantClient
 # Update import path for DiscordRequestType
 from src.utils.discord_utils import DiscordRequestType
 import asyncio # For potential async operations
-from src.agents.kis_developer import KisDeveloper
 from src.utils.logger import setup_logger
 
 # NEW: function registry
@@ -82,8 +81,8 @@ class Orchestrator:
             logger.warning("OPENAI_API_KEY not set. Orchestrator LLM functionality will be disabled.")
 
         # Initialize Agents
-        self.kis = KisDeveloper(account_info=settings.KIS_ACCOUNT)
-        self.info_crawler = InfoCrawler(settings.SERPAPI_API_KEY)
+        # self.kis = KisDeveloper(account_info=settings.KIS_ACCOUNT) # Remove KisDeveloper instantiation
+        self.info_crawler = InfoCrawler()
         self.memory_rag = MemoryRAG(db_session_factory=self.db_session_factory) # Pass factory
         # Define target symbols - should ideally come from a dynamic source or config
         target_etfs = settings.TARGET_SYMBOLS # Use symbols from config
