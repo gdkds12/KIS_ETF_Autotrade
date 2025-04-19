@@ -282,7 +282,7 @@ class KisBroker:
         params = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
-            "AFHR_FLASS_YN": "N",
+            "AFHR_FLPR_YN": "N",
             "OFL_YN": "",
             "INQR_DVSN": "02", # 조회구분 (02: 종목별)
             "UNPR_DVSN": "01",

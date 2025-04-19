@@ -64,6 +64,7 @@ class Orchestrator:
             qdrant_client: Qdrant 클라이언트 인스턴스
         """
         self.broker = broker
+        self.kis = broker
         self.db_session_factory = db_session_factory
         self.qdrant_client = qdrant_client
         self.llm_model_name = None # Store model name
