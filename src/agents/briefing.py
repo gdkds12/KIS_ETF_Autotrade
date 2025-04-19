@@ -93,7 +93,8 @@ class BriefingAgent:
         # --- LLM 생성 요약 섹션 ---
         llm_summary = self._generate_llm_summary(execution_results)
         report_parts.append("**✨ AI 종합 브리핑 ✨**")
-        report_parts.append(f"> {llm_summary.replace('\n', '\n> ')}") # Indent multiline summaries
+        indented = llm_summary.replace("\n", "\n> ")
+        report_parts.append(f"> {indented}")
         report_parts.append("\n")
 
         # --- 통계 요약 섹션 --- 
