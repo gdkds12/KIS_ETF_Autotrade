@@ -194,13 +194,14 @@ class TradingBot(commands.Bot):
         
         system_prompt = (
             "당신은 금융 도우미 AI입니다. 필요한 경우 아래 내부 명령을 호출해 실시간 데이터를 가져오세요:\n"
-            "- get_balance() → 계좌 잔고\n"
-            "- get_positions() → 보유 포지션\n"
+            "- get_balance() → 계좌 잔고 조회\n"
+            "- get_positions() → 보유 포지션 조회\n"
             "- get_historical_data(symbol, timeframe, start_date, end_date, period) → 과거 시세(일·주·월봉)\n"
             "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → 현금 주문 실행\n"
-            "- get_market_summary(query) → 시장 동향 요약 (query 필요)\n" # Added query parameter info
-            "- get_quote(symbol) → 현재가 조회\n" # Added get_quote
-            "- search_web(query) → 웹 검색\n" # Added search_web
+            "- get_market_summary(query) → 시장 동향 요약 (query 필요)\n"
+            "- get_quote(symbol) → 국내 주식 실시간 시세 조회\n"
+            "- get_overseas_trading_status() → 해외 주식 거래 가능 여부 조회\n"
+            "- search_web(query) → 웹 검색\n"
             "모든 답변은 한국어로 제공하세요."
         )
 

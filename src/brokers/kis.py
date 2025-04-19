@@ -431,6 +431,21 @@ class KisBroker:
         self.session.close()
         logger.info("KisBroker session closed.")
 
+    def get_overseas_status(self) -> dict:
+        """해외 주식(ETF 포함) 거래 가능 여부 조회."""
+        # 실제 API 호출로 상태를 확인할 수 있다면 구현하세요.
+        # 현재는 설정 값 기반으로 반환합니다.
+        from src.config import settings # Import settings locally
+        return {
+            "supports_overseas": settings.SUPPORT_OVERSEAS_TRADING,
+            "markets": ["US"] if settings.SUPPORT_OVERSEAS_TRADING else [],
+            "note": (
+                "해외 거래 가능 계좌가 설정되어 있습니다."
+                if settings.SUPPORT_OVERSEAS_TRADING else
+                "해외 거래 지원 계좌가 아닙니다."
+            )
+        }
+
 # 사용 예시 업데이트
 if __name__ == "__main__":
     from dotenv import load_dotenv

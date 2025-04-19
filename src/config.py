@@ -36,6 +36,7 @@ class Settings(BaseSettings):
     DB_PORT: int = 5432
     DB_NAME: str = "autotrade"
     DATABASE_URL: str | None = None # Construct if not provided
+    DB_TYPE: str = "postgresql"
 
     # Qdrant Configuration
     QDRANT_HOST: str = "localhost"
@@ -68,6 +69,8 @@ class Settings(BaseSettings):
     ORDER_INTERVAL_SECONDS: float = 0.2 # KIS 주문 API 호출 간 최소 간격 (초)
     CYCLE_INTERVAL_MINUTES: int = 15   # Orchestrator 자동 실행 간격 (분) - 실제 스케줄링은 외부에서 관리될 수 있음
     API_ERROR_BACKOFF_SECONDS: int = 5   # KIS API 오류 발생 시 재시도 전 대기 시간 (초)
+    # 해외 주식(ETF 포함) 거래 지원 여부
+    SUPPORT_OVERSEAS_TRADING: bool = False # True로 설정 시 미국 등 해외 ETF 거래 가능
 
     # Model configuration
     model_config = SettingsConfigDict(

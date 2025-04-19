@@ -155,6 +155,13 @@ def order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell
         buy_sell_code=buy_sell_code
     )
 
+@command
+def get_overseas_trading_status() -> dict:
+    """해외 주식(ETF 포함) 거래 가능 여부 조회."""
+    if ORCHESTRATOR is None:
+        return {"error": "orchestrator not ready"}
+    return ORCHESTRATOR.broker.get_overseas_status()
+
 # @command(
 #     name="search_news",
 #     description="Search for news articles related to a specific topic or company.",
