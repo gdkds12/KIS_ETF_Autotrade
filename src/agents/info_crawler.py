@@ -1,11 +1,9 @@
 # 시장 이슈 수집·요약 
 import logging
-# Remove unused imports if feedparser/requests are no longer needed
-# import feedparser 
-# import requests 
-# from requests.exceptions import RequestException
+import requests # Use requests library directly
+from requests.exceptions import RequestException
 import openai # Keep OpenAI for summarization
-import finnhub # Import Finnhub client
+# import finnhub # Remove finnhub client import
 
 from src.config import settings
 
@@ -24,49 +22,97 @@ else:
 
 class InfoCrawler:
     def __init__(self):
-        """InfoCrawler 초기화 (Finnhub 연동)"""
-        # Finnhub 클라이언트 초기화
-        if not settings.FINNHUB_API_KEY:
-            logger.error("FINNHUB_API_KEY is not set. Finnhub features will be disabled.")
-            self.fh_client = None
-        else:
-            try:
-                self.fh_client = finnhub.Client(api_key=settings.FINNHUB_API_KEY)
-                # Test connection (optional, e.g., fetch profile for a known symbol)
-                # self.fh_client.company_profile2(symbol='AAPL') 
-                logger.info("Finnhub client initialized successfully.")
-            except Exception as e:
-                 logger.error(f"Failed to initialize Finnhub client: {e}", exc_info=True)
-                 self.fh_client = None
-                 
-        # Remove requests.Session if no longer used
-        # self.session = requests.Session()
-        # self.session.headers.update({'User-Agent': 'AutotradeETFB<x_bin_568>Bot/1.0'})
+        """InfoCrawler 초기화 (Finnhub + Web Search)"""
+        # Finnhub 설정
+        self.api_key = settings.FINNHUB_API_KEY # Keep using this name for finnhub
+        self.base_url = "https://finnhub.io/api/v1" # Finnhub API base URL
         
-        logger.info("InfoCrawler initialized.") # General init message
+        # SerpAPI 설정 (일반 웹 검색용)
+        if not settings.SERPAPI_API_KEY:
+            logger.warning("SERPAPI_API_KEY not set. Web search functionality will be disabled.")
+            self.serpapi_key = None
+        else:
+            self.serpapi_key = settings.SERPAPI_API_KEY
+        self.serpapi_url = "https://serpapi.com/search"
+        
+        self.session = requests.Session()
+        self.session.headers.update({'User-Agent': 'AutotradeETFB/1.0'})
+        
+        # Remove fh_client attribute
+        # self.fh_client = finnhub.Client(api_key=settings.FINNHUB_API_KEY)
+        
+        # Keep LLM model reference if needed by _summarize_with_llm implementation
+        # (Current _summarize_with_llm uses global openai key, so no instance needed here)
+        # self.llm_model = info_llm_model 
+        
+        logger.info("InfoCrawler initialized (Finnhub + Web Search).")
 
-    def _fetch_raw_data(self) -> list[str]:
-        """Finnhub에서 최신 뉴스 헤드라인 목록을 조회합니다."""
-        if not self.fh_client:
-            logger.warning("Finnhub client not initialized. Cannot fetch news.")
+    # Remove old _fetch_raw_data
+    # def _fetch_raw_data(...)
+
+    # New method to search news using requests
+    def search_news(self, query: str = None, category: str = 'general') -> list[dict]:
+        """Finnhub API 로 최신 뉴스 검색 (requests 사용)"""
+        if not self.api_key:
+            logger.warning("Finnhub API key not set. Cannot search news.")
             return []
             
-        logger.info(f"Fetching general news headlines from Finnhub...")
+        url = f"{self.base_url}/news"
+        params = {"token": self.api_key, "category": category}
+        # Finnhub /news endpoint doesn't directly support query text search,
+        # but we can fetch general news or potentially company news if query is a symbol.
+        # For simplicity, we'll stick to category for now.
+        # If query IS a symbol, Finnhub has /company-news
+        # if query and category is None: # Example: If query is likely a symbol
+        #    url = f"{self.base_url}/company-news"
+        #    params = {"symbol": query.upper(), "token": self.api_key, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}
+        
+        logger.info(f"Searching Finnhub news (category: {category})...")
         try:
-            # 일반 뉴스 카테고리 조회
-            # Note: Finnhub returns dicts, not just strings
-            articles = self.fh_client.general_news(category='general', min_id=0)
-            # Extract headlines, handling potential missing keys
-            headlines = [str(a.get('headline', '')).strip() for a in articles if a.get('headline')]
-            logger.info(f"Fetched {len(headlines)} headlines from Finnhub")
-            return headlines[:10] # Limit to 10 for prompt length
-        except finnhub.FinnhubAPIException as e:
-            logger.error(f"Finnhub API error fetching news: {e}")
-            return []
+            resp = self.session.get(url, params=params, timeout=10)
+            resp.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
+            news_list = resp.json()
+            # Ensure it's a list before slicing
+            if isinstance(news_list, list):
+                 logger.info(f"Fetched {len(news_list)} news articles from Finnhub.")
+                 return news_list
+            else:
+                 logger.error(f"Unexpected response format from Finnhub news API: {news_list}")
+                 return []
+        except RequestException as e:
+             logger.error(f"Finnhub news request failed: {e}", exc_info=True)
+             return []
         except Exception as e:
-            logger.error(f"Error fetching or processing Finnhub news: {e}", exc_info=True)
-            return []
+             logger.error(f"Error processing Finnhub news response: {e}", exc_info=True)
+             return []
 
+    # New method to search symbols using requests
+    def search_symbols(self, query: str) -> list[dict]:
+        """Finnhub API 로 종목/회사 검색 (requests 사용)"""
+        if not self.api_key:
+            logger.warning("Finnhub API key not set. Cannot search symbols.")
+            return []
+        if not query:
+            logger.warning("Empty query for symbol search.")
+            return []
+            
+        url = f"{self.base_url}/search"
+        params = {"q": query, "token": self.api_key}
+        logger.info(f"Searching Finnhub symbols for query: '{query}'...")
+        try:
+            resp = self.session.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            results = data.get("result", [])
+            logger.info(f"Found {len(results)} symbol matches for query '{query}'.")
+            return results
+        except RequestException as e:
+             logger.error(f"Finnhub symbol search request failed: {e}", exc_info=True)
+             return []
+        except Exception as e:
+             logger.error(f"Error processing Finnhub symbol search response: {e}", exc_info=True)
+             return []
+             
     def _summarize_with_llm(self, prompt: str) -> str:
         """OpenAI LLM을 사용하여 주어진 프롬프트에 대한 응답(요약)을 생성합니다."""
         if not settings.OPENAI_API_KEY:
@@ -101,31 +147,84 @@ class InfoCrawler:
             logger.error(f"OpenAI summarization failed: {e}", exc_info=True)
             return f"(요약 불가: {e})"
 
-    def get_market_summary(self, user_query: str) -> str:
-        """사용자 요청(user_query)에 맞춰 Finnhub 뉴스 헤드라인을 수집하고, LLM으로 요약해 돌려줍니다."""
+    def get_market_summary(self, user_query: str, max_articles: int = 5) -> str:
+        """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
         logger.info(f"Getting market summary for query: {user_query!r}")
         
-        headlines = self._fetch_raw_data() # Fetch headlines using finnhub client
+        # Fetch general news using the new search_news method
+        news_list = self.search_news(category='general')
         
-        if not headlines:
-            logger.warning("No headlines fetched from Finnhub.")
-            # Return a message indicating no news or error during fetch
+        if not news_list:
+            logger.warning("No news fetched from Finnhub for market summary.")
             return "(최신 시장 뉴스를 가져올 수 없습니다.)"
 
-        # Build the prompt using the fetched headlines and user query
-        snippets = [f"- {h}" for h in headlines]
+        # Extract headlines/summaries for the prompt
+        snippets = []
+        for item in news_list[:max_articles]: # Limit articles used in prompt
+            headline = item.get("headline", "")
+            summary = item.get("summary", "") or item.get("source", "") # Use summary or source as fallback
+            if headline or summary:
+                 snippets.append(f"- {headline.strip()} ({summary.strip()})" if headline and summary else f"- {headline.strip() or summary.strip()}")
+
+        if not snippets:
+            logger.warning("Could not extract usable snippets from fetched news.")
+            return "(뉴스 내용을 처리할 수 없습니다.)"
+            
+        # Build the prompt using the fetched snippets and user query
+        combined_news = "\n".join(snippets)
         prompt = (
             f"사용자 질문: {user_query}\n\n"
-            f"최근 주요 뉴스 헤드라인:\n"
-            + "\n".join(snippets) + "\n\n"
+            f"최근 주요 뉴스 요약:\n"
+            f"{combined_news}\n\n"
             f"위 뉴스를 바탕으로 사용자 질문 '{user_query}'에 대해 한국어로 간결하게 답변해주세요."
         )
         logger.debug(f"Generated prompt for LLM summarization:\n{prompt}")
 
         # Call the LLM summarization function with the generated prompt
-        summary = self._summarize_with_llm(prompt)
-        logger.info(f"Generated market summary (length: {len(summary)}).")
-        return summary
+        llm_summary = self._summarize_with_llm(prompt)
+        logger.info(f"Generated market summary (length: {len(llm_summary)}).")
+        return llm_summary
+
+    def search_web(self, query: str, num_results: int = 5) -> list[dict]:
+        """
+        SerpAPI를 이용해 일반 웹 검색을 수행합니다.
+        - query: 검색어
+        - num_results: 최대 결과 개수
+        반환 형식: [{"title":..., "link":..., "snippet":...}, ...]
+        """
+        if not self.serpapi_key:
+            logger.error("SERPAPI_API_KEY 가 설정되지 않았습니다. 웹 검색을 수행할 수 없습니다.")
+            return [] # Return empty list as error indicator
+            
+        params = {
+            "q": query,
+            "api_key": self.serpapi_key,
+            "num": num_results,
+            "engine": "google", # Specify search engine (e.g., google, naver)
+            "gl": "kr", # Specify country (e.g., kr for Korea)
+            "hl": "ko" # Specify language (e.g., ko for Korean)
+        }
+        logger.info(f"Performing web search for query: '{query}' using SerpAPI...")
+        try:
+            resp = self.session.get(self.serpapi_url, params=params, timeout=10)
+            resp.raise_for_status() # Raise HTTPError for bad responses
+            data = resp.json()
+            results = []
+            # Extract relevant fields from organic results
+            for item in data.get("organic_results", [])[:num_results]:
+                results.append({
+                    "title": item.get("title"),
+                    "link": item.get("link"),
+                    "snippet": item.get("snippet") or item.get("displayed_link") # Use displayed_link as fallback
+                })
+            logger.info(f"Web search completed. Found {len(results)} results for '{query}'.")
+            return results
+        except RequestException as e:
+             logger.error(f"SerpAPI web search request failed for '{query}': {e}", exc_info=True)
+             return []
+        except Exception as e:
+            logger.error(f"Error processing SerpAPI response for '{query}': {e}", exc_info=True)
+            return []
 
 # Example Usage
 if __name__ == "__main__":

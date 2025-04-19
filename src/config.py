@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str # Make it required
     # GOOGLE_API_KEY: str | None = None # Remove Google API key
     FINNHUB_API_KEY: str # Make Finnhub API Key required
+    SERPAPI_API_KEY: str | None = None # Optional: SerpAPI Key for web search
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
     # Using gpt-4o-mini as a placeholder for the non-existent gpt-4.1-nano
@@ -107,6 +108,7 @@ if __name__ == "__main__":
     print(f"OPENAI_API_KEY Set: {bool(settings.OPENAI_API_KEY)}")
     # print(f"GOOGLE_API_KEY Set: {bool(settings.GOOGLE_API_KEY)}") # Remove print for Google key
     print(f"FINNHUB_API_KEY Set: {bool(settings.FINNHUB_API_KEY)}")
+    print(f"SERPAPI_API_KEY Set: {bool(settings.SERPAPI_API_KEY)}")
     # Print updated model names
     print(f"LLM Main Tier (Reasoning): {settings.LLM_MAIN_TIER_MODEL}")
     print(f"LLM Lightweight Tier (Summarization, etc.): {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
