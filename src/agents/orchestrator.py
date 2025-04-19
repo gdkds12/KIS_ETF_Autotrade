@@ -107,20 +107,17 @@ class Orchestrator:
         logger.info("Orchestrator initialized all agents.")
 
     # ------------------------------------------------------------------
-    # LLM‑CALLABLE HELPER FUNCTIONS
+    # LLM‑CALLABLE HELPER FUNCTIONS (REMOVED - now defined in registry.py)
     # ------------------------------------------------------------------
 
-    @command
     def get_balance(self) -> dict:
         """현재 계좌의 예수금·총자산을 조회합니다."""
         return self.broker.get_balance()
 
-    @command
     def get_positions(self) -> list[dict]:
         """현재 보유 포지션 목록을 조회합니다."""
         return self.broker.get_positions()
 
-    @command
     def get_market_summary(self) -> str:
         """InfoCrawler 로부터 오늘의 시장 요약을 가져옵니다."""
         return self.info_crawler.get_market_summary()

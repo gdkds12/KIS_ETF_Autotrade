@@ -13,6 +13,9 @@ import os
 from enum import Enum, auto
 import aiohttp # Added for making HTTP requests to FastAPI
 
+# NEW – registry import (Should be kept from previous patch)
+from src.utils.registry import COMMANDS
+
 from src.config import settings
 # Placeholder for backend client - might replace with direct agent calls or specific LLM client
 # from some_backend_client import BackendClient 
@@ -108,7 +111,7 @@ class TradingBot(commands.Bot):
               db.close()
               
     async def get_openai_response(self, session_info: dict, user_message: str) -> tuple[str, dict | None]:
-        """Get response from OpenAI main tier model, managing conversation history."""
+        """Get response from OpenAI main tier model, managing conversation history and function calls."""
         if not openai_client:
             return "(죄송합니다, OpenAI API가 설정되지 않아 응답할 수 없습니다.)", None
 
@@ -118,68 +121,126 @@ class TradingBot(commands.Bot):
         # Add user message to history
         message_history.append({"role": "user", "content": user_message})
         
-        # System prompt defining the bot's role and desired output format
         system_prompt = (
-            "당신은 한국 ETF 시장에 대한 금융 도우미 AI입니다. 사용자의 질문에 답변하고, 필요시 KIS API 형식에 맞는 주문 제안을 할 수 있습니다." 
-            "시장 분석, 종목 정보 제공, 간단한 계산 등을 수행합니다. "
+            "당신은 한국 ETF 시장에 대한 금융 도우미 AI입니다. 사용자의 질문에 답변하고, 필요시 내부 명령(get_balance, get_positions, get_market_summary 등)을 호출하여 정보를 얻습니다."
+            " 시장 분석, 종목 정보 제공, 간단한 계산 등을 수행합니다. "
             "투자 관련 조언은 제공하지만, 최종 결정은 사용자의 책임임을 명시해야 합니다."
             "만약 매수 또는 매도 주문을 제안해야 한다면, 반드시 다음 JSON 형식으로 제안 내용을 응답 끝에 포함시키세요: "
             '\n{\n  "suggested_order": {\n    "symbol": "종목코드 (예: 069500)",\n    "action": "buy 또는 sell",\n    "quantity": 주문수량 (정수),\n    "price": 주문가격 (지정가=실제가격, 시장가=0)\n  }\n}'
             "주문 제안이 없다면, JSON 부분을 포함하지 마세요."
             "모든 답변은 한국어로 제공하세요."
         )
-        
+
         messages = [
             {"role": "system", "content": system_prompt}
-        ] + message_history[-10:] # Keep last 10 messages for context (adjust as needed)
+        ] + message_history[-10:] # Keep last 10 messages
+
+        # -------- Function calling set‑up --------
+        functions = [fn._oas for fn in COMMANDS.values()]
         
         response_text = "(오류 발생)"
         suggested_order = None
-        
+
         try:
-            logger.info(f"Sending request to OpenAI model: {settings.LLM_MAIN_TIER_MODEL} for session {llm_session_id}")
-            completion = await openai_client.chat.completions.create(
+            logger.info(f"Sending request to OpenAI model: {settings.LLM_MAIN_TIER_MODEL} for session {llm_session_id} (with function calling)")
+            
+            # -----------------------------------------
+            #   1st completion
+            # -----------------------------------------
+            first_completion = await openai_client.chat.completions.create(
                 model=settings.LLM_MAIN_TIER_MODEL,
                 messages=messages,
-                temperature=0.7, # Adjust creativity/factuality
-                max_tokens=1000
+                functions=functions,
+                function_call="auto",
+                temperature=0.7,
+                max_tokens=1000,
             )
-            response_text = completion.choices[0].message.content
-            logger.info(f"Received response from OpenAI for session {llm_session_id}")
 
-            # Add AI response to history
-            message_history.append({"role": "assistant", "content": response_text})
-            session_info['message_history'] = message_history # Update session state
+            first_choice = first_completion.choices[0]
+            message_from_llm = first_choice.message
 
-            # --- 주문 제안 JSON 파싱 시도 --- 
-            try:
-                # 응답 텍스트에서 JSON 부분만 추출 시도
-                json_start = response_text.rfind('{\n  "suggested_order":')
-                if json_start != -1:
-                    json_part = response_text[json_start:]
-                    # JSON 앞뒤의 불필요한 텍스트 제거 (모델이 정확히 형식 따르지 않을 경우 대비)
-                    # json_part = json_part.strip().replace('\'', '"') # 작은따옴표 처리 등
-                    try:
-                         order_data = json.loads(json_part)
-                         if "suggested_order" in order_data:
-                             suggested_order = order_data["suggested_order"]
-                             # 간단한 유효성 검사
-                             if all(k in suggested_order for k in ['symbol', 'action', 'quantity', 'price']) \
-                                and isinstance(suggested_order['quantity'], int) \
-                                and isinstance(suggested_order['price'], int): 
-                                 logger.info(f"Parsed suggested order: {suggested_order}")
-                                 # 응답 텍스트에서 JSON 부분 제거 (선택 사항)
-                                 # response_text = response_text[:json_start].strip()
-                             else:
-                                 logger.warning(f"Parsed JSON for order is incomplete or invalid: {suggested_order}")
-                                 suggested_order = None
-                    except json.JSONDecodeError as json_e:
-                        logger.warning(f"Failed to parse JSON from LLM response: {json_e}. Response part: {json_part[:100]}...")
-                        suggested_order = None
-            except Exception as parse_e:
-                 logger.error(f"Error during suggested order parsing: {parse_e}", exc_info=True)
-                 suggested_order = None
-                 
+            # 5️⃣ Fallback Handling: Check if LLM chose a function
+            if first_choice.finish_reason != 'function_call':
+                logger.info(f"LLM responded directly for session {llm_session_id}.")
+                response_text = message_from_llm.content
+            else:
+                # LLM decided to run an internal command.
+                logger.info(f"LLM requested function call: {message_from_llm.function_call.name} for session {llm_session_id}.")
+                fn_name = message_from_llm.function_call.name
+                try:
+                    fn_args = json.loads(message_from_llm.function_call.arguments or "{}")
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse arguments for function {fn_name}: {message_from_llm.function_call.arguments}")
+                    raise ValueError(f"Invalid arguments for function {fn_name}")
+
+                if fn_name not in COMMANDS:
+                    logger.error(f"LLM requested unknown function: {fn_name}")
+                    raise ValueError(f"Unknown function requested: {fn_name}")
+                
+                # Execute the command (using the wrapper from registry.py)
+                # These wrappers access the global ORCHESTRATOR instance
+                try:
+                    logger.info(f"Executing command: {fn_name} with args: {fn_args}")
+                    # Run synchronous function in threadpool to avoid blocking discord bot
+                    loop = asyncio.get_running_loop()
+                    fn_result = await loop.run_in_executor(None, lambda: COMMANDS[fn_name](**fn_args))
+                    logger.info(f"Command {fn_name} executed. Result: {str(fn_result)[:100]}...")
+                except Exception as exec_e:
+                    logger.error(f"Error executing command {fn_name}: {exec_e}", exc_info=True)
+                    # Inform LLM about the execution error
+                    fn_result = {"error": f"Failed to execute command {fn_name}: {str(exec_e)}"}
+
+                # -----------------------------------------
+                #   2nd completion
+                # -----------------------------------------
+                logger.info(f"Sending function result back to LLM for final response (session {llm_session_id}).")
+                second_completion = await openai_client.chat.completions.create(
+                    model=settings.LLM_MAIN_TIER_MODEL,
+                    messages=messages + [
+                        message_from_llm, # Include the LLM's first message (function call request)
+                        {
+                            "role": "function",
+                            "name": fn_name,
+                            "content": json.dumps(fn_result, ensure_ascii=False), # Send function result back
+                        },
+                    ],
+                    temperature=0.7,
+                    max_tokens=1000,
+                )
+                response_text = second_completion.choices[0].message.content
+                logger.info(f"Received final response from OpenAI after function call (session {llm_session_id}).")
+
+            # --- Order Parsing (remains the same) --- 
+            if response_text:
+                # Add AI response to history
+                message_history.append({"role": "assistant", "content": response_text})
+                session_info['message_history'] = message_history # Update session state
+                
+                # Attempt to parse suggested_order JSON
+                try:
+                    json_start = response_text.rfind('{\n  "suggested_order":')
+                    if json_start != -1:
+                        json_part = response_text[json_start:]
+                        try:
+                             order_data = json.loads(json_part)
+                             if "suggested_order" in order_data:
+                                 suggested_order = order_data["suggested_order"]
+                                 if all(k in suggested_order for k in ['symbol', 'action', 'quantity', 'price']) \
+                                    and isinstance(suggested_order['quantity'], int) \
+                                    and isinstance(suggested_order['price'], int): 
+                                     logger.info(f"Parsed suggested order: {suggested_order}")
+                                 else:
+                                     logger.warning(f"Parsed JSON for order is incomplete or invalid: {suggested_order}")
+                                     suggested_order = None
+                        except json.JSONDecodeError as json_e:
+                            logger.warning(f"Failed to parse JSON from LLM response: {json_e}. Response part: {json_part[:100]}...")
+                            suggested_order = None
+                except Exception as parse_e:
+                     logger.error(f"Error during suggested order parsing: {parse_e}", exc_info=True)
+                     suggested_order = None
+            else:
+                 response_text = "(AI가 빈 응답을 반환했습니다.)" # Handle empty response
+
         except RateLimitError as e:
              logger.error(f"OpenAI Rate Limit Exceeded: {e}")
              response_text = "(현재 요청량이 많아 잠시 후 다시 시도해주세요.)"
@@ -187,8 +248,8 @@ class TradingBot(commands.Bot):
              logger.error(f"OpenAI API Error: {e}")
              response_text = f"(API 오류 발생: {e})"
         except Exception as e:
-             logger.error(f"Unexpected error interacting with OpenAI: {e}", exc_info=True)
-             response_text = "(AI 응답 생성 중 오류가 발생했습니다.)"
+             logger.error(f"Unexpected error interacting with OpenAI or executing function: {e}", exc_info=True)
+             response_text = "(AI 응답 생성 또는 내부 명령 실행 중 오류가 발생했습니다.)"
              
         return response_text, suggested_order
 

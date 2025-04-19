@@ -15,6 +15,7 @@ from src.brokers.kis import KisBroker, KisBrokerError
 from src.agents.orchestrator import Orchestrator # Import Orchestrator
 from src.db.models import SessionLocal, engine, create_tables # Assuming DB setup
 from qdrant_client import QdrantClient
+from src.utils.registry import set_orchestrator
 
 # --- 로깅 설정 --- 
 logging.basicConfig(level=logging.INFO, 
@@ -92,9 +93,11 @@ async def lifespan(app: FastAPI):
         app_state['orchestrator'] = orchestrator
         logger.info("Orchestrator initialized.")
 
+        # 💡 make wrappers aware of this live instance
+        set_orchestrator(orchestrator)
+
         # --- Start Background Task REMOVED --- 
         # The periodic run is no longer scheduled automatically on startup.
-        # It will be triggered manually via API call (e.g., from Discord bot).
         # logger.info("Automatic periodic orchestrator task is disabled.")
 
         yield # Application is running
