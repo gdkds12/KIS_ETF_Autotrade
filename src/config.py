@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # --- LLM Configuration --- 
     OPENAI_API_KEY: str # Make it required
     # GOOGLE_API_KEY: str | None = None # Remove Google API key
-    FINNHUB_API_KEY: str | None = None # Finnhub API Key
+    FINNHUB_API_KEY: str # Make Finnhub API Key required
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
     # Using gpt-4o-mini as a placeholder for the non-existent gpt-4.1-nano
