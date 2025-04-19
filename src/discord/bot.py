@@ -258,6 +258,12 @@ class TradingBot(commands.Bot):
                 fn_name = message_from_llm.function_call.name
                 try:
                     fn_args = json.loads(message_from_llm.function_call.arguments or "{}")
+                    # get_market_summary 는 query 인자를 필수로 받도록 변경했으니,
+                    # LLM이 인자를 안 넣어줬을 때는 user_message 를 query 로 넘겨줘야 합니다.
+                    if fn_name == 'get_market_summary' and not fn_args.get('query'): # Check if 'query' key exists and is not empty
+                         logger.warning(f"LLM called {fn_name} without query arg. Using user message as query.")
+                         fn_args = {"query": user_message}
+                         
                 except json.JSONDecodeError:
                     logger.error(f"Failed to parse arguments for function {fn_name}: {message_from_llm.function_call.arguments}")
                     raise ValueError(f"Invalid arguments for function {fn_name}")
