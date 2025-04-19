@@ -145,26 +145,27 @@ class TradingBot(commands.Bot):
             logger.info(f"Sending request to OpenAI model: {settings.LLM_MAIN_TIER_MODEL} for session {llm_session_id} (with function calling)")
             
             # -----------------------------------------
-            #   1st completion
+            #   1st completion - Allow function call or direct answer
             # -----------------------------------------
-            first_completion = await openai_client.chat.completions.create(
+            completion = await openai_client.chat.completions.create(
                 model=settings.LLM_MAIN_TIER_MODEL,
                 messages=messages,
-                functions=functions,
-                function_call="auto",
+                functions=functions, # Pass function specs
+                function_call="auto", # Let the model decide
                 temperature=0.7,
                 max_tokens=1000,
             )
 
-            first_choice = first_completion.choices[0]
-            message_from_llm = first_choice.message
+            choice = completion.choices[0]
+            message_from_llm = choice.message
 
-            # 5️⃣ Fallback Handling: Check if LLM chose a function
-            if first_choice.finish_reason != 'function_call':
+            # 4️⃣ Check if a function call was requested
+            if choice.finish_reason != 'function_call':
+                # No function call, use the direct response
                 logger.info(f"LLM responded directly for session {llm_session_id}.")
                 response_text = message_from_llm.content
             else:
-                # LLM decided to run an internal command.
+                # Function call requested, proceed with execution
                 logger.info(f"LLM requested function call: {message_from_llm.function_call.name} for session {llm_session_id}.")
                 fn_name = message_from_llm.function_call.name
                 try:
@@ -177,46 +178,44 @@ class TradingBot(commands.Bot):
                     logger.error(f"LLM requested unknown function: {fn_name}")
                     raise ValueError(f"Unknown function requested: {fn_name}")
                 
-                # Execute the command (using the wrapper from registry.py)
-                # These wrappers access the global ORCHESTRATOR instance
+                # Execute the command (wrapper from registry.py)
                 try:
                     logger.info(f"Executing command: {fn_name} with args: {fn_args}")
-                    # Run synchronous function in threadpool to avoid blocking discord bot
                     loop = asyncio.get_running_loop()
                     fn_result = await loop.run_in_executor(None, lambda: COMMANDS[fn_name](**fn_args))
                     logger.info(f"Command {fn_name} executed. Result: {str(fn_result)[:100]}...")
                 except Exception as exec_e:
                     logger.error(f"Error executing command {fn_name}: {exec_e}", exc_info=True)
-                    # Inform LLM about the execution error
                     fn_result = {"error": f"Failed to execute command {fn_name}: {str(exec_e)}"}
 
                 # -----------------------------------------
-                #   2nd completion
+                #   2nd completion - Send result back to LLM
                 # -----------------------------------------
                 logger.info(f"Sending function result back to LLM for final response (session {llm_session_id}).")
                 second_completion = await openai_client.chat.completions.create(
                     model=settings.LLM_MAIN_TIER_MODEL,
                     messages=messages + [
-                        message_from_llm, # Include the LLM's first message (function call request)
+                        message_from_llm, # Include the function call request
                         {
                             "role": "function",
                             "name": fn_name,
-                            "content": json.dumps(fn_result, ensure_ascii=False), # Send function result back
+                            "content": json.dumps(fn_result, ensure_ascii=False),
                         },
                     ],
                     temperature=0.7,
                     max_tokens=1000,
+                    # NOTE: Do not pass functions here, we want a direct answer now
                 )
                 response_text = second_completion.choices[0].message.content
                 logger.info(f"Received final response from OpenAI after function call (session {llm_session_id}).")
 
-            # --- Order Parsing (remains the same) --- 
+            # --- Order Parsing (applies to final response_text) --- 
             if response_text:
-                # Add AI response to history
+                # Add final AI response to history
                 message_history.append({"role": "assistant", "content": response_text})
-                session_info['message_history'] = message_history # Update session state
+                session_info['message_history'] = message_history
                 
-                # Attempt to parse suggested_order JSON
+                # Parse suggested order (logic remains the same)
                 try:
                     json_start = response_text.rfind('{\n  "suggested_order":')
                     if json_start != -1:
@@ -239,7 +238,7 @@ class TradingBot(commands.Bot):
                      logger.error(f"Error during suggested order parsing: {parse_e}", exc_info=True)
                      suggested_order = None
             else:
-                 response_text = "(AI가 빈 응답을 반환했습니다.)" # Handle empty response
+                 response_text = "(AI가 빈 응답을 반환했습니다.)"
 
         except RateLimitError as e:
              logger.error(f"OpenAI Rate Limit Exceeded: {e}")
