@@ -12,10 +12,12 @@ import json # For order parsing
 import os
 from enum import Enum, auto
 import aiohttp # Added for making HTTP requests to FastAPI
+import traceback # Import traceback module
 
 # NEW – registry import (Should be kept from previous patch)
 from src.utils.registry import COMMANDS, set_orchestrator
 from src.utils import registry # Import the module itself for accessing ORCHESTRATOR
+from src.utils.discord_utils import DiscordRequestType # Import the enum from utils
 
 from src.config import settings
 # Placeholder for backend client - might replace with direct agent calls or specific LLM client
@@ -60,11 +62,6 @@ else:
 # --- Constants & Enums ---
 # Channel ID where order confirmations should be sent (Loaded from settings)
 ORDER_CONFIRMATION_CHANNEL_ID = settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID
-
-class DiscordRequestType(Enum):
-    ORDER_CONFIRMATION = auto()
-    GENERAL_NOTIFICATION = auto()
-    ALERT = auto()
 
 class TradingBot(commands.Bot):
     def __init__(self):
@@ -385,15 +382,20 @@ class TradingBot(commands.Bot):
 
                 except Exception as e:
                     logger.error(f"[Session:{message.channel.id}] Error processing message: {e}", exc_info=True)
-                    # 디버그 정보 송출
-                    debug = (
+                    tb = traceback.format_exc() # Format the traceback
+                    debug_msg = (
                         f"```DEBUG\n"
                         f"ORCHESTRATOR set: {registry.ORCHESTRATOR is not None}\n"
                         f"Error: {type(e).__name__}: {e}\n"
+                        f"Traceback:\n{tb}"
                         f"```"
                     )
+                    # Truncate if too long for Discord message limit (2000 chars)
+                    if len(debug_msg) > 1900:
+                        debug_msg = debug_msg[:1900] + "... (truncated)```"
+                        
                     await message.channel.send(
-                        "죄송합니다, 메시지를 처리하는 중 오류가 발생했습니다.\n" + debug
+                        "⚠️ 처리 중 오류가 발생했습니다. 관리자에게 문의하세요.\n" + debug_msg
                     )
         else:
             # Process other messages or commands if needed (currently only handles session threads)

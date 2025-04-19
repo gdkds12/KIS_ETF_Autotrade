@@ -21,7 +21,8 @@ from src.agents.risk_guard import RiskGuard
 from src.agents.briefing import BriefingAgent
 # from src.db.models import SessionLocal # If direct DB session needed here
 from qdrant_client import QdrantClient
-from src.discord.bot import DiscordRequestType, send_discord_request # Hypothetical import
+# Update import path for DiscordRequestType
+from src.utils.discord_utils import DiscordRequestType
 import asyncio # For potential async operations
 
 # NEW: function registry
