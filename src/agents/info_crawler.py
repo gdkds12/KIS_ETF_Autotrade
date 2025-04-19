@@ -253,8 +253,7 @@ class InfoCrawler:
             f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
             "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
         )
-        logger.debug(f"Generated prompt for multi-search summary:
-{prompt[:500]}...")
+        logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
         return self._summarize_with_llm(prompt)
 
     def search_web(self, query: str, num_results: int = 5) -> list[dict]:
