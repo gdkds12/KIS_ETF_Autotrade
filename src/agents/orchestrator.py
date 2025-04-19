@@ -3,7 +3,7 @@
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-import google.generativeai as genai
+import openai # Import OpenAI
 import json # For parsing LLM response
 import uuid
 from datetime import datetime
@@ -63,35 +63,17 @@ class Orchestrator:
         self.broker = broker
         self.db_session_factory = db_session_factory
         self.qdrant_client = qdrant_client
-        self.llm_model = None
+        self.llm_model_name = None # Store model name
 
-        # Initialize LLM Model (Gemini Main Tier)
-        if settings.GOOGLE_API_KEY:
-            try:
-                # Check if already configured (optional but good practice)
-                # Assuming google.generativeai has a way to check, otherwise remove check
-                # For example, maybe just re-configure every time or use a flag
-                # if not genai.is_configured(): # <- This caused the original error, so removing or adapting
-                #    genai.configure(api_key=settings.GOOGLE_API_KEY)
-
-                # Safely configure (re-configuring is often safe)
-                genai.configure(api_key=settings.GOOGLE_API_KEY)
-
-                self.llm_model = genai.GenerativeModel(settings.LLM_MAIN_TIER_MODEL) # Use main tier for orchestration
-                logger.info(f"Orchestrator initialized with Gemini model: {settings.LLM_MAIN_TIER_MODEL}")
-            except AttributeError:
-                 logger.warning("The installed google.generativeai library might not have 'is_configured' or behaves differently. Attempting configuration anyway.")
-                 try:
-                     genai.configure(api_key=settings.GOOGLE_API_KEY)
-                     self.llm_model = genai.GenerativeModel(settings.LLM_MAIN_TIER_MODEL)
-                     logger.info(f"Orchestrator initialized with Gemini model: {settings.LLM_MAIN_TIER_MODEL}")
-                 except Exception as e_inner:
-                      logger.error(f"Failed to initialize Gemini model for Orchestrator after fallback: {e_inner}", exc_info=True)
-            except Exception as e:
-                logger.error(f"Failed to initialize Gemini model for Orchestrator: {e}", exc_info=True)
-                # Consider fallback or raising an error depending on criticality
+        # Initialize OpenAI API Key
+        if settings.OPENAI_API_KEY:
+            # Setting openai.api_key globally, consider client instance if needed
+            if not getattr(openai, 'api_key', None):
+                openai.api_key = settings.OPENAI_API_KEY
+            self.llm_model_name = settings.LLM_MAIN_TIER_MODEL  # Store model name
+            logger.info(f"Orchestrator will use OpenAI model: {self.llm_model_name}")
         else:
-            logger.warning("GOOGLE_API_KEY not set. Orchestrator LLM functionality will be disabled.")
+            logger.warning("OPENAI_API_KEY not set. Orchestrator LLM functionality will be disabled.")
 
         # Initialize Agents
         self.info_crawler = InfoCrawler() # LLM model could be passed here if needed by crawler
@@ -127,8 +109,8 @@ class Orchestrator:
         """일일 자동매매 사이클 실행 (LLM 중심)
         """
         logger.info("Starting daily cycle with LLM orchestration...")
-        if not self.llm_model:
-            logger.error("LLM model not initialized. Cannot run daily cycle.")
+        if not self.llm_model_name: # Check if model name is set
+            logger.error("LLM model name not set. Cannot run daily cycle.")
             return
 
         try:
@@ -176,7 +158,7 @@ class Orchestrator:
         """LLM에게 현재 상황 정보를 제공하고 행동 계획(JSON)을 요청합니다.
         """
         logger.info("Asking LLM for the daily action plan...")
-        if not self.llm_model:
+        if not self.llm_model_name:
             return None
 
         # Build the prompt for the LLM
@@ -219,24 +201,51 @@ class Orchestrator:
         """
 
         try:
-            # Configure safety settings if needed
-            safety_settings = {} # Adjust as necessary
-            response = self.llm_model.generate_content(prompt, safety_settings=safety_settings)
-
-            # Extract JSON part from the response (LLMs sometimes add extra text)
-            response_text = response.text.strip()
-            json_start = response_text.find('[')
-            json_end = response_text.rfind(']')
-            if json_start != -1 and json_end != -1:
-                action_plan_json = response_text[json_start:json_end+1]
-                logger.info(f"Received action plan from LLM: {action_plan_json}")
-                return action_plan_json
+            logger.info(f"Requesting OpenAI action plan using {self.llm_model_name}...")
+            messages = [
+                {"role": "system", "content": "You are an AI assistant that generates JSON action plans for an ETF autotrading system based on provided market context and portfolio data."}, # System prompt
+                {"role": "user", "content": prompt}
+            ]
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY) # Create client
+            resp = client.chat.completions.create(
+                model=self.llm_model_name, # Use stored model name
+                messages=messages,
+                temperature=0.7,
+                max_tokens=800, # Adjust as needed
+                # Consider response_format for JSON mode if using compatible models
+                # response_format={"type": "json_object"} 
+            )
+            text = resp.choices[0].message.content.strip()
+            
+            # Extract JSON part (improved robustness)
+            json_block = None
+            if text.startswith("```json"):
+                json_block = text[len("```json"):].split("```")[0].strip()
+            elif text.startswith("[") and text.endswith("]"):
+                json_block = text
             else:
-                 logger.error(f"LLM response did not contain a valid JSON list: {response_text}")
-                 return None
+                start, end = text.find('['), text.rfind(']')
+                if start != -1 and end != -1:
+                    json_block = text[start:end+1]
+            
+            if json_block:
+                # Validate if it's actually JSON before returning
+                try:
+                    json.loads(json_block) # Try parsing
+                    logger.info(f"Received JSON action plan from OpenAI: {json_block}")
+                    return json_block
+                except json.JSONDecodeError:
+                     logger.error(f"Extracted block is not valid JSON: {json_block}")
+                     return None # Failed validation
+            else:
+                logger.error(f"Could not extract JSON action plan from LLM response: {text}")
+                return None
 
+        except openai.APIError as e:
+             logger.error(f"OpenAI API Error during action plan generation: {e}", exc_info=True)
+             return None
         except Exception as e:
-            logger.error(f"LLM generation failed: {e}", exc_info=True)
+            logger.error(f"OpenAI action plan generation failed: {e}", exc_info=True)
             return None
 
     def _execute_action_plan(self, action_plan: list) -> list:

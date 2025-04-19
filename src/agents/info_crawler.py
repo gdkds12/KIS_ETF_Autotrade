@@ -3,24 +3,22 @@ import logging
 import feedparser
 import requests
 from requests.exceptions import RequestException
-import google.generativeai as genai
+import openai # Import OpenAI
 
 from src.config import settings
 
 logger = logging.getLogger(__name__)
 
-# --- Gemini 모델 초기화 (InfoCrawler 용) --- 
-info_llm_model = None
-if settings.GOOGLE_API_KEY and settings.LLM_LIGHTWEIGHT_TIER_MODEL:
-    try:
-        # is_configured() 체크 대신 무조건 설정
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        info_llm_model = genai.GenerativeModel(settings.LLM_LIGHTWEIGHT_TIER_MODEL)
-        logger.info(f"InfoCrawler initialized with optional LLM: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
-    except Exception as e:
-        logger.warning(f"Failed to initialize optional LLM for InfoCrawler: {e}. Summarization might be basic.")
+# --- OpenAI 모델 초기화 (InfoCrawler 용) --- 
+if settings.OPENAI_API_KEY:
+    # Check if openai.api_key is already set or needs setting
+    # Note: Setting it globally might have side effects if other parts use different keys.
+    # Consider passing the client or key if needed.
+    if not getattr(openai, 'api_key', None):
+        openai.api_key = settings.OPENAI_API_KEY
+    logger.info(f"InfoCrawler will use OpenAI model: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
 else:
-    logger.warning("Google API Key or Lightweight LLM model not set. InfoCrawler LLM summary will be basic.")
+    logger.warning("OPENAI_API_KEY not set. InfoCrawler LLM summary will be basic.")
 
 class InfoCrawler:
     def __init__(self):
@@ -30,8 +28,7 @@ class InfoCrawler:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'AutotradeETFB<x_bin_568>Bot/1.0'})
         
-        self.llm_model = info_llm_model
-        # Add Finnhub API key check
+        # Finnhub API key setup
         if not settings.FINNHUB_API_KEY:
             logger.warning("FINNHUB_API_KEY not set. Market news fetching will fail.")
             self.finnhub_key = None
@@ -61,24 +58,38 @@ class InfoCrawler:
         return raw_data
 
     def _summarize_with_llm(self, prompt: str) -> str:
-        """LLM을 사용하여 주어진 프롬프트에 대한 응답(요약)을 생성합니다."""
-        if not self.llm_model:
-            logger.warning("LLM not available or no prompt provided for summary.")
-            return "(LLM 요약 불가: 모델 없음)"
+        """OpenAI LLM을 사용하여 주어진 프롬프트에 대한 응답(요약)을 생성합니다."""
+        if not settings.OPENAI_API_KEY:
+            logger.warning("OpenAI API key not set. Cannot summarize.")
+            return "(LLM 요약 불가: API 키 없음)"
         if not prompt:
             logger.warning("Empty prompt provided to LLM.")
             return "(LLM 요약 불가: 빈 프롬프트)"
 
         try:
-            logger.info(f"Requesting LLM completion for the provided prompt...")
-            # Assuming generate_content takes the prompt directly
-            response = self.llm_model.generate_content(prompt)
-            summary = response.text.strip()
-            logger.info("Received LLM completion.")
+            logger.info(f"Requesting OpenAI completion using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
+            messages = [
+                {"role": "system", "content": "You are an expert in summarizing financial news headlines in Korean based on user queries."}, # System prompt
+                {"role": "user", "content": prompt}
+            ]
+            # Use the synchronous client for simplicity within this potentially sync function
+            # If InfoCrawler methods become async, use AsyncOpenAI client
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY) # Create a client instance
+            resp = client.chat.completions.create(
+                model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=500 # Adjust token limit as needed
+            )
+            summary = resp.choices[0].message.content.strip()
+            logger.info("Received summary from OpenAI.")
             return summary
+        except openai.APIError as e:
+             logger.error(f"OpenAI API Error during summarization: {e}", exc_info=True)
+             return f"(OpenAI API 오류: {e})"
         except Exception as e:
-            logger.error(f"LLM completion generation failed: {e}", exc_info=True)
-            return f"(LLM 요약 생성 중 오류 발생: {e})"
+            logger.error(f"OpenAI summarization failed: {e}", exc_info=True)
+            return f"(요약 불가: {e})"
 
     def get_market_summary(self, user_query: str) -> str:
         """
@@ -91,14 +102,12 @@ class InfoCrawler:
             return "(오류: Finnhub API 키가 설정되지 않았습니다.)"
             
         # 1) Finnhub에서 뉴스 헤드라인 가져오기
-        # Use general news category for broader context
         params = {"category": "general", "token": self.finnhub_key}
         try:
             logger.info("Fetching news headlines from Finnhub...")
             resp = self.session.get("https://finnhub.io/api/v1/news", params=params, timeout=5)
             resp.raise_for_status()
-            # Limit the number of articles to avoid overly long prompts
-            articles = resp.json()[:5] # Get latest 5 general news articles
+            articles = resp.json()[:5]
             logger.info(f"Fetched {len(articles)} headlines from Finnhub.")
             if not articles:
                  return "(Finnhub에서 관련 뉴스를 찾을 수 없습니다.)"
@@ -122,76 +131,15 @@ class InfoCrawler:
         )
         logger.debug(f"Generated prompt for LLM summarization:\n{prompt}")
 
-        # 3) LLM 요약 호출
+        # 3) LLM 요약 호출 (Now uses OpenAI via _summarize_with_llm)
         return self._summarize_with_llm(prompt)
-
-    def _summarize_with_gemini(self, text: str) -> str:
-        """Gemini 모델을 사용하여 텍스트 요약"""
-        if not self.llm_model:
-            logger.warning("Gemini model not available for summarization.")
-            return "(요약 불가: Gemini 모델 없음)"
-        
-        prompt = f"다음 뉴스 기사들을 한국어로 간결하게 요약해줘. 핵심 내용만 포함하고, 시장에 미칠 영향 중심으로 작성해줘.\n\n{text}"
-        
-        try:
-            logger.info(f"Sending text (approx {len(text)} chars) to Gemini for summarization...")
-            # Safety settings 설정 (필요에 따라 조정)
-            safety_settings = { 
-                # genai.types.HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
-                # genai.types.HarmCategory.HARM_CATEGORY_HATE_SPEECH: genai.types.HarmBlockThreshold.BLOCK_NONE,
-                # genai.types.HarmCategory.HARM_CATEGORY_HARASSMENT: genai.types.HarmBlockThreshold.BLOCK_NONE,
-                # genai.types.HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: genai.types.HarmBlockThreshold.BLOCK_NONE,
-            }
-            response = self.llm_model.generate_content(prompt, safety_settings=safety_settings)
-            summary = response.text
-            logger.info("Successfully received summary from Gemini.")
-            return summary
-        except Exception as e:
-            logger.error(f"Gemini summarization failed: {e}", exc_info=True)
-            # 오류 응답 분석 (선택 사항)
-            # if hasattr(e, 'response') and e.response.prompt_feedback:
-            #     logger.error(f"Gemini prompt feedback: {e.response.prompt_feedback}")
-            return f"(시장 정보 요약 중 오류 발생: {e})"
-
-    def _fetch_rss(self, url: str):
-        """지정된 URL에서 RSS 피드를 가져옵니다."""
-        try:
-            logger.info(f"Fetching RSS from: {url}")
-            feed = feedparser.parse(url)
-            if feed.bozo:
-                logger.warning(f"Potential issue parsing RSS feed from {url}. Bozo bit set: {feed.bozo_exception}")
-            if not feed.entries:
-                 logger.warning(f"No entries found in RSS feed from {url}")
-                 return None
-            logger.info(f"Successfully fetched {len(feed.entries)} entries from {url}")
-            return feed
-        except Exception as e:
-            logger.error(f"Error fetching or parsing RSS from {url}: {e}", exc_info=True)
-            return None
-
-    def _parse_feed(self, feed, source_name: str) -> list:
-        """파싱된 RSS 피드에서 기사 정보를 추출합니다."""
-        articles = []
-        if not feed or not feed.entries:
-            return articles
-        for entry in feed.entries:
-            summary = entry.get("summary", entry.get("description", ""))
-            articles.append({
-                "source": source_name,
-                "title": entry.get("title", "제목 없음"),
-                "link": entry.get("link", "링크 없음"),
-                "published": entry.get("published", None),
-                "published_parsed": entry.get("published_parsed", None),
-                "summary": summary.strip()
-            })
-        return articles
 
 # Example Usage
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    if not settings.FINNHUB_API_KEY or not settings.GOOGLE_API_KEY:
-        print("\nWarning: FINNHUB_API_KEY or GOOGLE_API_KEY not set. Summarization might fail.")
+    if not settings.FINNHUB_API_KEY or not settings.OPENAI_API_KEY:
+        print("\nWarning: FINNHUB_API_KEY or OPENAI_API_KEY not set. Summarization might fail.")
     
     crawler = InfoCrawler()
     test_query = "최근 시장 동향은 어떤가요?"

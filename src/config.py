@@ -45,15 +45,15 @@ class Settings(BaseSettings):
     QDRANT_COLLECTION_NAME: str = "kis_etf_memory"
 
     # --- LLM Configuration --- 
-    OPENAI_API_KEY: str | None = None
-    GOOGLE_API_KEY: str | None = None
+    OPENAI_API_KEY: str # Make it required
+    # GOOGLE_API_KEY: str | None = None # Remove Google API key
     FINNHUB_API_KEY: str | None = None # Finnhub API Key
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
-    LLM_MAIN_TIER_MODEL: str = "gemini-1.5-pro-latest"       # <<< 변경: 주요 추론용 (Orchestrator)
-    LLM_LIGHTWEIGHT_TIER_MODEL: str = "gemini-2.5-flash-preview-04-17" # <<< 변경: 가벼운 작업용 (요약, 크롤링 등)
-    # LLM_HIGHEST_TIER_MODEL: str = "gpt-4o" # 예비 또는 더 높은 성능 필요시 (OpenAI)
-    # LLM_ALTERNATIVE_MODEL: str = "gpt-3.5-turbo" # 다른 옵션 (OpenAI)
+    # Using gpt-4o-mini as a placeholder for the non-existent gpt-4.1-nano
+    LLM_MAIN_TIER_MODEL: str = "gpt-4.1-nano-2025-04-14"       # Main reasoning model (Orchestrator)
+    LLM_LIGHTWEIGHT_TIER_MODEL: str = "gpt-4.1-nano-2025-04-14" # Lightweight tasks (Summarization, etc.)
+    # LLM_HIGHEST_TIER_MODEL: str = "gpt-4o" # Alternative if needed
     
     # Embedding Model (Example)
     EMBEDDING_MODEL_NAME: str = "text-embedding-3-large" # <<< 변경: OpenAI 최신 대형 모델
@@ -105,18 +105,9 @@ if __name__ == "__main__":
     print(f"DATABASE_URL: {settings.DATABASE_URL}")
     print(f"QDRANT_URL: {settings.QDRANT_URL}")
     print(f"OPENAI_API_KEY Set: {bool(settings.OPENAI_API_KEY)}")
-    print(f"GOOGLE_API_KEY Set: {bool(settings.GOOGLE_API_KEY)}")
+    # print(f"GOOGLE_API_KEY Set: {bool(settings.GOOGLE_API_KEY)}") # Remove print for Google key
     print(f"FINNHUB_API_KEY Set: {bool(settings.FINNHUB_API_KEY)}")
     # Print updated model names
     print(f"LLM Main Tier (Reasoning): {settings.LLM_MAIN_TIER_MODEL}")
     print(f"LLM Lightweight Tier (Summarization, etc.): {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
-    # print(f"LLM Highest Tier (Alternative): {settings.LLM_HIGHEST_TIER_MODEL}")
-    print(f"EMBEDDING_MODEL_NAME: {settings.EMBEDDING_MODEL_NAME}")
-    print(f"VECTOR_DIM: {settings.VECTOR_DIM}")
-    print(f"INVESTMENT_AMOUNT: {settings.INVESTMENT_AMOUNT}")
-    print(f"MAX_DAILY_ORDERS: {settings.MAX_DAILY_ORDERS}")
-    print(f"STOP_LOSS_PERCENT: {settings.STOP_LOSS_PERCENT}")
-    print(f"TARGET_SYMBOLS: {settings.TARGET_SYMBOLS}")
-    print(f"ORDER_INTERVAL_SECONDS: {settings.ORDER_INTERVAL_SECONDS}")
-    print(f"CYCLE_INTERVAL_MINUTES: {settings.CYCLE_INTERVAL_MINUTES}")
-    print(f"API_ERROR_BACKOFF_SECONDS: {settings.API_ERROR_BACKOFF_SECONDS}") 
+    # ... (print rest of settings) ... 
