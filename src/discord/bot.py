@@ -428,43 +428,85 @@ class TradingBot(commands.Bot):
                     if suggested_order:
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
 
-                    # 검색 함수 호출된 경우에만 Embed 로 요약 전송
-                    if finish_reason == 'function_call' and func_name == 'multi_search' and isinstance(func_result, dict):
-                        # Extract information from the structured result of multi_search
-                        summary_text = func_result.get("summary", "(요약 내용을 가져올 수 없습니다.)")
-                        subqueries_count = func_result.get("subqueries_count", "알 수 없음")
-                        snippets_count = func_result.get("snippets_count", "알 수 없음")
+                    # 함수 호출별로 임베드 처리
+                    if finish_reason == 'function_call':
+                        embed = None
+                        # 1) 다중 검색 결과 요약
+                        if func_name == 'multi_search' and isinstance(func_result, dict):
+                            summary_text    = func_result.get('summary', '(요약 내용을 가져올 수 없습니다.)')
+                            subqueries_count = func_result.get('subqueries_count', '알 수 없음')
+                            snippets_count   = func_result.get('snippets_count', '알 수 없음')
+                            embed = make_summary_embed(
+                                title="🔍 다중 검색 결과 요약",
+                                summary=summary_text
+                            )
+                            embed.add_field(
+                                name="🔢 시도한 검색 쿼리 수",
+                                value=str(subqueries_count),
+                                inline=True
+                            )
+                            embed.set_footer(text=f"수집된 정보(스니펫): {snippets_count}개")
+                        # 2) 뉴스 검색 결과
+                        elif func_name == 'search_news' and isinstance(func_result, list):
+                            lines = []
+                            for item in func_result[:5]: # Show top 5 results
+                                headline = item.get('headline') or item.get('title') or ''
+                                source   = item.get('source')   or item.get('summary') or ''
+                                # Truncate long headlines/sources if necessary
+                                headline = (headline[:70] + '...') if len(headline) > 70 else headline
+                                source = (source[:50] + '...') if len(source) > 50 else source
+                                lines.append(f"• {headline} ({source})")
+                            description = '\n'.join(lines) if lines else '(뉴스 결과가 없습니다)'
+                            embed = make_summary_embed(
+                                title="📰 뉴스 검색 결과",
+                                summary=description
+                            )
+                        # 3) 웹 검색 결과
+                        elif func_name == 'search_web' and isinstance(func_result, list):
+                            lines = []
+                            for item in func_result[:5]: # Show top 5 results
+                                title = item.get('title', '')
+                                link  = item.get('link', '')
+                                snippet = item.get('snippet', '') # Get snippet too
+                                # Truncate long titles/snippets
+                                title = (title[:80] + '...') if len(title) > 80 else title
+                                snippet = (snippet[:100] + '...') if len(snippet) > 100 else snippet
+                                if link:
+                                     lines.append(f"• [{title}]({link})\n  _{snippet}_")
+                                else:
+                                     lines.append(f"• {title}\n  _{snippet}_")
+                            description = '\n\n'.join(lines) if lines else '(웹 검색 결과가 없습니다)'
+                            embed = make_summary_embed(
+                                title="🌐 웹 검색 결과",
+                                summary=description
+                            )
+                        # 4) 시장 동향 요약
+                        elif func_name == 'get_market_summary':
+                            # get_market_summary's result is already summarized by LLM in response_text
+                            embed = make_summary_embed(
+                                title="📈 시장 동향 요약",
+                                summary=response_text # Use the LLM's final response text
+                            )
+                            
+                        # --- Add other function call specific Embeds here ---
+                        # elif func_name == 'get_balance': ...
+                        # elif func_name == 'get_positions': ...
+                        # etc.
                         
-                        # Extract attempts from the function arguments if available
-                        attempts_tried = "알 수 없음"
-                        if isinstance(func_args, dict):
-                             # The registry passes attempts as int to the actual function
-                             # But LLM might have passed string originally, let's handle both if needed
-                             # However, the registry wrapper handles conversion, so func_args might not be useful here
-                             # Let's use subqueries_count from the result instead of parsing args again
-                             attempts_tried = subqueries_count # Use the count from the result
-
-                        embed = make_summary_embed(
-                            title="🔍 다중 검색 결과 요약", # Updated title
-                            summary=summary_text # Use summary from result dict
-                        )
-                        # 시도한 쿼리 수 필드 추가
-                        embed.add_field(
-                            name="🔢 시도한 검색 쿼리 수",
-                            value=str(attempts_tried),
-                            inline=True
-                        )
-                        # 수집된 스니펫 수를 footer 로 표시
-                        embed.set_footer(text=f"수집된 정보(스니펫): {snippets_count}개")
-
-                        await message.channel.send(embed=embed, view=view)
+                        # 최종 전송
+                        if embed:
+                            await message.channel.send(embed=embed, view=view)
+                            log_msg_type = f"Embed ({func_name})"
+                        else:
+                            # If function was called but no specific embed handler, send text
+                            await message.channel.send(response_text, view=view)
+                            log_msg_type = f"Text (unhandled func: {func_name})"
                     else:
-                        # 다른 함수 호출 결과 또는 일반 응답은 텍스트로 전송
-                        # If response_text comes from 2nd completion after non-multi_search func, it's string.
-                        # If it's direct response, it's string.
+                        # 함수 호출이 아니면 일반 텍스트 전송
                         await message.channel.send(response_text, view=view)
+                        log_msg_type = "Text (direct)"
                         
-                    log_msg_type = "Embed" if finish_reason == 'function_call' and func_name == 'multi_search' else "Text"
+                    # Update logging message type
                     logger.info(f"[Session:{message.channel.id}] Sent {log_msg_type} response to user.")
 
                 except Exception as e:
