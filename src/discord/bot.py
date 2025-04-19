@@ -15,6 +15,7 @@ import aiohttp # Added for making HTTP requests to FastAPI
 
 # NEW – registry import (Should be kept from previous patch)
 from src.utils.registry import COMMANDS, set_orchestrator
+from src.utils import registry # Import the module itself for accessing ORCHESTRATOR
 
 from src.config import settings
 # Placeholder for backend client - might replace with direct agent calls or specific LLM client
@@ -228,6 +229,16 @@ class TradingBot(commands.Bot):
             choice = completion.choices[0]
             message_from_llm = choice.message
 
+            # --- DEBUG LOGGING ---
+            logger.debug(f"LLM finish_reason: {choice.finish_reason}")
+            if choice.finish_reason == "function_call":
+                fn_name = choice.message.function_call.name
+                fn_args = choice.message.function_call.arguments
+                logger.debug(f"Function call requested: {fn_name}({fn_args})")
+            else:
+                logger.debug(f"LLM direct response: {choice.message.content}")
+            # -----------------------
+
             # 4️⃣ Check if a function call was requested
             if choice.finish_reason != 'function_call':
                 # No function call, use the direct response
@@ -344,7 +355,6 @@ class TradingBot(commands.Bot):
             # --- LLM Interaction --- 
             async with message.channel.typing():
                 try:
-                    # Get response from OpenAI
                     response_text, suggested_order = await self.get_openai_response(session_info, message.content)
                     
                     # Log AI response to DB
@@ -365,7 +375,16 @@ class TradingBot(commands.Bot):
 
                 except Exception as e:
                     logger.error(f"[Session:{message.channel.id}] Error processing message: {e}", exc_info=True)
-                    await message.channel.send("죄송합니다, 메시지를 처리하는 중 오류가 발생했습니다.")
+                    # 디버그 정보 송출
+                    debug = (
+                        f"```DEBUG\n"
+                        f"ORCHESTRATOR set: {registry.ORCHESTRATOR is not None}\n"
+                        f"Error: {type(e).__name__}: {e}\n"
+                        f"```"
+                    )
+                    await message.channel.send(
+                        "죄송합니다, 메시지를 처리하는 중 오류가 발생했습니다.\n" + debug
+                    )
         else:
             # Process other messages or commands if needed (currently only handles session threads)
             await super().on_message(message) # Process regular commands if any
