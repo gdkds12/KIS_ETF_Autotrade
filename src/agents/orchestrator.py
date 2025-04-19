@@ -284,7 +284,7 @@ class Orchestrator:
                 model=self.llm_model_name, # Use stored model name
                 messages=messages,
                 temperature=0.7,
-                max_tokens=800, # Adjust as needed
+                max_completion_tokens=800, # Adjust as needed
                 # Consider response_format for JSON mode if using compatible models
                 # response_format={"type": "json_object"} 
             )

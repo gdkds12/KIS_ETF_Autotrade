@@ -30,28 +30,31 @@ else:
     logger.warning("OPENAI_API_KEY not set. Session summarization will use placeholder.")
 
 # --- LLM 요약 함수 (Now using OpenAI) --- 
-def summarize_text(text: str) -> str:
-    """OpenAI ChatCompletion을 사용하여 대화 내용을 요약합니다."""
-    if not settings.OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY not set. Returning placeholder summary.")
-        return f"(요약 불가: 모델 없음) 대화 시작: {text[:50]}..."
-    if not text:
-        logger.warning("Empty text provided for summarization.")
-        return "(요약 불가: 빈 텍스트)"
+def summarize_text(text: str, topic: str = None) -> str:
+    """LLM을 사용하여 텍스트 요약하기"""
+    from openai import OpenAI
+    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    
+    system_prompt = (
+        "당신은 텍스트 요약 전문가입니다. 다음 텍스트를 명확하고 간결하게 요약해주세요.\n"
+        "요약은 원문의 핵심 정보와 중요한 세부 사항을 보존해야 합니다.\n"
+        "불필요한 세부사항은 제외하고, 원문의 주요 주제와 논점에 집중하세요.\n"
+        "한국어로 3-5문장 분량으로 요약하세요."
+    )
+    
+    user_content = f"다음 텍스트를 요약해주세요:\n\n{text}"
+    if topic:
+        user_content += f"\n\n이 텍스트는 '{topic}' 주제와 관련이 있습니다."
         
     try:
-        logger.info(f"Requesting OpenAI summary using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
-        messages = [
-            {"role": "system", "content": "You are an expert assistant that concisely summarizes conversation logs in Korean."}, # System prompt
-            {"role": "user", "content": f"Please summarize the following conversation log concisely in Korean. Focus on key questions, decisions, and topics discussed:\n\n--- Conversation Log ---\n{text}\n\n--- Summary ---"}
-        ]
-        # Create a client instance for the request
-        client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
         resp = client.chat.completions.create(
-            model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
-            messages=messages,
-            temperature=0.5,
-            max_tokens=300 # Adjust token limit if needed
+            model=settings.LLM_SUMMARY_TIER_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content}
+            ],
+            temperature=0.3,
+            max_completion_tokens=300,
         )
         summary = resp.choices[0].message.content.strip()
         logger.info("Successfully received summary from OpenAI.")

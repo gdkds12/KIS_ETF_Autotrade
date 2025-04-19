@@ -250,7 +250,7 @@ class TradingBot(commands.Bot):
                 functions=functions, # Pass function specs
                 function_call="auto", # Let the model decide
                 temperature=0.7,
-                max_tokens=1000,
+                max_completion_tokens=1000,
             )
 
             choice = completion.choices[0]
@@ -340,7 +340,7 @@ class TradingBot(commands.Bot):
                         },
                     ],
                     temperature=0.7,
-                    max_tokens=1000,
+                    max_completion_tokens=1000,
                     # NOTE: Do not pass functions here, we want a direct answer now
                 )
                 response_text = second_completion.choices[0].message.content

@@ -119,29 +119,37 @@ class InfoCrawler:
              logger.error(f"Error processing Finnhub symbol search response: {e}", exc_info=True)
              return []
              
-    def _summarize_with_llm(self, prompt: str) -> str:
-        """OpenAI LLM을 사용하여 주어진 프롬프트에 대한 응답(요약)을 생성합니다."""
-        if not settings.OPENAI_API_KEY:
-            logger.warning("OpenAI API key not set. Cannot summarize.")
-            return "(LLM 요약 불가: API 키 없음)"
-        if not prompt:
-            logger.warning("Empty prompt provided to LLM.")
-            return "(LLM 요약 불가: 빈 프롬프트)"
-
+    def _summarize_with_llm(self, snippets, query):
+        """LLM을 사용하여 수집된 스니펫을 요약합니다."""
+        if not snippets:
+            return "(수집된 정보가 없습니다)"
+            
+        # 정보가 너무 많으면 LLM 토큰 한도를 초과할 수 있으므로 제한
+        combined_text = "\n---\n".join(snippets[:20])  # 최대 20개 스니펫으로 제한
+        
         try:
-            logger.info(f"Requesting OpenAI completion using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
-            messages = [
-                {"role": "system", "content": "You are an expert in summarizing financial news headlines in Korean based on user queries."}, # System prompt
-                {"role": "user", "content": prompt}
-            ]
-            # Use the synchronous client for simplicity within this potentially sync function
-            # If InfoCrawler methods become async, use AsyncOpenAI client
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY) # Create a client instance
+            # OpenAI에 직접 요약 요청
+            from openai import OpenAI
+            client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            
+            system_prompt = (
+                "당신은 수집된 정보를 명확하고 간결하게 요약하는 전문가입니다. "
+                "수집된 텍스트 조각들을 분석하여 일관된 요약을 생성하세요. "
+                "서로 모순되는 정보가 있으면 그 점을 명시하고, "
+                "날짜나 시간이 언급된 경우 가장 최신 정보에 더 가중치를 두세요. "
+                "가능한 한 객관적으로 정보를 요약하되, 명확한 추세가 보이면 결론도 포함하세요."
+            )
+            
+            user_prompt = f"다음 정보를 바탕으로 '{query}'에 대해 요약해주세요:\n\n{combined_text}"
+            
             resp = client.chat.completions.create(
-                model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=500 # Adjust token limit as needed
+                model=settings.LLM_MARKET_TIER_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,
+                max_completion_tokens=500,
             )
             summary = resp.choices[0].message.content.strip()
             logger.info("Received summary from OpenAI.")
@@ -193,7 +201,7 @@ class InfoCrawler:
         logger.debug(f"Generated prompt for LLM summarization:\n{prompt}")
 
         # Call the LLM summarization function with the generated prompt
-        llm_summary = self._summarize_with_llm(prompt)
+        llm_summary = self._summarize_with_llm(snippets, user_query)
         logger.info(f"Generated market summary (length: {len(llm_summary)}).")
         return llm_summary
 
@@ -277,7 +285,7 @@ class InfoCrawler:
             "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
         )
         logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
-        summary = self._summarize_with_llm(prompt)
+        summary = self._summarize_with_llm(snippets, query)
         
         # Return a dictionary with summary and metadata
         return {

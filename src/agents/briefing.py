@@ -71,7 +71,7 @@ class BriefingAgent:
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
                 messages=messages,
                 temperature=0.5,
-                max_tokens=300 # Adjust token limit
+                max_completion_tokens=300 # Adjust token limit
             )
             llm_summary = resp.choices[0].message.content.strip()
             logger.info("Successfully received summary from OpenAI for briefing.")
