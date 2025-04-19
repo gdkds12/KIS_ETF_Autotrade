@@ -197,7 +197,7 @@ class InfoCrawler:
         logger.info(f"Generated market summary (length: {len(llm_summary)}).")
         return llm_summary
 
-    def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> str:
+    def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> dict:
         """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
         logger.info(f"Performing multi-search for query: '{query}' with {attempts} attempts (max {max_attempts})")
         # 1) 시도 횟수 보정
@@ -263,7 +263,11 @@ class InfoCrawler:
 
         if not snippets:
             logger.warning(f"Multi-search for '{query}' yielded no results after parallel fetch.")
-            return "(관련 정보를 찾을 수 없습니다.)"
+            return {
+                "summary": "(관련 정보를 찾을 수 없습니다.)",
+                "subqueries_count": len(subqueries),
+                "snippets_count": 0
+            }
 
         # 4) LLM 요약 프롬프트 구성
         combined = "\n".join(snippets)
@@ -272,8 +276,15 @@ class InfoCrawler:
             f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
             "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
         )
-        logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...") # Corrected log message format
-        return self._summarize_with_llm(prompt)
+        logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
+        summary = self._summarize_with_llm(prompt)
+        
+        # Return a dictionary with summary and metadata
+        return {
+            "summary": summary,
+            "subqueries_count": len(subqueries),
+            "snippets_count": len(snippets)
+        }
 
     def search_web(self, query: str, num_results: int = 5) -> list[dict]:
         """

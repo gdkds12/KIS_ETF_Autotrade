@@ -103,10 +103,10 @@ def search_web(query: str) -> list:
     return ORCHESTRATOR.info_crawler.search_web(query=query)
 
 @command
-def multi_search(query: str, attempts: str = "3") -> str:
+def multi_search(query: str, attempts: str = "3") -> dict:
     """여러 번의 news/web 검색을 병렬 수행해 종합 요약합니다."""
     if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'info_crawler'):
-        return "(Orchestrator 또는 InfoCrawler 미준비)"
+        return {"error": "Orchestrator 또는 InfoCrawler 미준비"}
     # attempts는 문자열로 들어오므로 int 변환
     try:
         n = int(attempts)
@@ -120,6 +120,7 @@ def multi_search(query: str, attempts: str = "3") -> str:
     # Ensure n is within reasonable bounds if needed (e.g., 1 to 10)
     n = max(1, min(n, 10)) # Example bounds
     
+    # The called function now returns a dict, so we return it directly
     return ORCHESTRATOR.info_crawler.multi_search(query=query, attempts=n)
 
 @command

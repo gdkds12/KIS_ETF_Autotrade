@@ -13,6 +13,7 @@ import os
 from enum import Enum, auto
 import aiohttp # Added for making HTTP requests to FastAPI
 import traceback # Import traceback module
+from typing import Any
 
 # --- Registry and Utility imports ---
 from src.utils.registry import COMMANDS, set_orchestrator # Keep COMMANDS, set_orchestrator
@@ -192,10 +193,11 @@ class TradingBot(commands.Bot):
          finally:
               db.close()
               
-    async def get_openai_response(self, session_info: dict, user_message: str) -> tuple[str, dict | None, str]:
+    async def get_openai_response(self, session_info: dict, user_message: str) -> tuple[str, dict | None, str, str | None, str | None, dict | None, Any | None]:
         """Get response from OpenAI main tier model, managing conversation history and function calls."""
         if not openai_client:
-            return "(죄송합니다, OpenAI API가 설정되지 않아 응답할 수 없습니다.)", None, "(Debug info not generated)"
+            # Return None for the new fields on error
+            return "(죄송합니다, OpenAI API가 설정되지 않아 응답할 수 없습니다.)", None, "(Debug info not generated)", None, None, None, None
 
         llm_session_id = session_info['llm_session_id']
         message_history = session_info.get('message_history', [])
@@ -229,7 +231,11 @@ class TradingBot(commands.Bot):
         
         response_text = "(오류 발생)"
         suggested_order = None
-        debug_info = "(Debug info not generated)" # Default debug info
+        debug_info = "(Debug info not generated)"
+        finish_reason = None
+        func_name = None
+        func_args = None # Initialize func_args
+        func_result = None # Initialize func_result
 
         try:
             logger.info(f"Sending request to OpenAI model: {settings.LLM_MAIN_TIER_MODEL} for session {llm_session_id} (with function calling)")
@@ -248,67 +254,75 @@ class TradingBot(commands.Bot):
 
             choice = completion.choices[0]
             message_from_llm = choice.message
+            finish_reason = choice.finish_reason # Capture finish_reason here
 
             # --- DEBUG INFO GENERATION --- 
             fc = None
-            if choice.finish_reason == 'function_call':
-                fc = {
-                    "name": choice.message.function_call.name,
-                    "arguments": choice.message.function_call.arguments
-                }
+            if finish_reason == 'function_call': # Use captured finish_reason
+                # Capture func_name when it's a function call
+                func_name = message_from_llm.function_call.name
+                # Parse arguments here to potentially pass back
+                try:
+                    func_args = json.loads(message_from_llm.function_call.arguments or "{}")
+                except json.JSONDecodeError:
+                     logger.error(f"Failed to parse arguments for function {func_name}: {message_from_llm.function_call.arguments}")
+                     # Handle error, maybe return immediately or set func_args to indicate failure
+                     func_args = {"error": "Failed to parse arguments"}
+                     # Decide if we should stop here
+                     # return response_text, suggested_order, debug_info, finish_reason, func_name, func_args, func_result
+                     
+                fc = {"name": func_name, "arguments": func_args} # Store parsed args in fc too for debug
+            # debug_info generation remains the same using fc
             debug_info = json.dumps({
-                "finish_reason": choice.finish_reason,
+                "finish_reason": finish_reason, # Include captured finish_reason
                 "function_call": fc,
-                "raw_content": choice.message.content or "",
-                "orchestrator_set": registry.ORCHESTRATOR is not None # Include orchestrator status
+                "raw_content": message_from_llm.content or "",
+                "orchestrator_set": registry.ORCHESTRATOR is not None
             }, ensure_ascii=False, indent=2)
             logger.debug(f"Generated Debug Info: {debug_info}")
             # ---------------------------
 
             # 4️⃣ Check if a function call was requested
-            if choice.finish_reason != 'function_call':
+            if finish_reason != 'function_call': # Use captured finish_reason
                 # No function call, use the direct response
                 logger.info(f"LLM responded directly for session {llm_session_id}.")
                 response_text = message_from_llm.content
+                # finish_reason is already set
             else:
                 # Function call requested, proceed with execution
-                logger.info(f"LLM requested function call: {message_from_llm.function_call.name} for session {llm_session_id}.")
-                fn_name = message_from_llm.function_call.name
+                logger.info(f"LLM requested function call: {func_name} for session {llm_session_id}.")
+                # fn_name is already captured as func_name
                 try:
                     fn_args = json.loads(message_from_llm.function_call.arguments or "{}")
-                    # get_market_summary 는 query 인자를 필수로 받도록 변경했으니,
-                    # LLM이 인자를 안 넣어줬을 때는 user_message 를 query 로 넘겨줘야 합니다.
-                    if fn_name == 'get_market_summary' and not fn_args.get('query'): # Check if 'query' key exists and is not empty
-                         logger.warning(f"LLM called {fn_name} without query arg. Using user message as query.")
+                    if func_name == 'get_market_summary' and not fn_args.get('query'):
+                         logger.warning(f"LLM called {func_name} without query arg. Using user message as query.")
                          fn_args = {"query": user_message}
-                         
                 except json.JSONDecodeError:
-                    logger.error(f"Failed to parse arguments for function {fn_name}: {message_from_llm.function_call.arguments}")
-                    raise ValueError(f"Invalid arguments for function {fn_name}")
-
-                if fn_name not in COMMANDS:
-                    logger.error(f"LLM requested unknown function: {fn_name}")
-                    raise ValueError(f"Unknown function requested: {fn_name}")
+                    logger.error(f"Failed to parse arguments for function {func_name}: {message_from_llm.function_call.arguments}")
+                    raise ValueError(f"Invalid arguments for function {func_name}")
+                
+                if func_name not in COMMANDS:
+                    logger.error(f"LLM requested unknown function: {func_name}")
+                    raise ValueError(f"Unknown function requested: {func_name}")
                 
                 # Execute the command (wrapper from registry.py)
                 try:
-                    logger.info(f"Executing command: {fn_name} with args: {fn_args}")
+                    logger.info(f"Executing command: {func_name} with args: {fn_args}")
                     loop = asyncio.get_running_loop()
-                    fn_result = await loop.run_in_executor(None, lambda: COMMANDS[fn_name](**fn_args))
-                    logger.info(f"Command {fn_name} executed. Result: {str(fn_result)[:100]}...")
+                    fn_result = await loop.run_in_executor(None, lambda: COMMANDS[func_name](**fn_args))
+                    logger.info(f"Command {func_name} executed. Result: {str(fn_result)[:100]}...")
                 except Exception as exec_e:
-                    logger.error(f"Error executing command {fn_name}: {exec_e}", exc_info=True)
+                    logger.error(f"Error executing command {func_name}: {exec_e}", exc_info=True)
                     # 오류 발생 시, 디버그 정보 업데이트 및 바로 반환
                     error_debug = (
                         f"```DEBUG\n"
                         f"ORCHESTRATOR set: {registry.ORCHESTRATOR is not None}\n"
-                        f"Function Call Failed: {fn_name}({fn_args})\n"
+                        f"Function Call Failed: {func_name}({fn_args})\n"
                         f"Error: {type(exec_e).__name__}: {exec_e}\n"
                         f"```"
                     )
-                    response_text = f"(내부 명령 '{fn_name}' 실행 중 오류 발생)"
-                    # Return the error message and the specific error debug info
-                    return response_text, None, error_debug # Return 3 values
+                    response_text = f"(내부 명령 '{func_name}' 실행 중 오류 발생)"
+                    return response_text, None, error_debug, finish_reason, func_name, func_args, None # func_result is None
 
                 # -----------------------------------------
                 #   2nd completion - Send result back to LLM
@@ -320,7 +334,7 @@ class TradingBot(commands.Bot):
                         message_from_llm, # Include the function call request
                         {
                             "role": "function",
-                            "name": fn_name,
+                            "name": func_name,
                             "content": json.dumps(fn_result, ensure_ascii=False),
                         },
                     ],
@@ -372,8 +386,8 @@ class TradingBot(commands.Bot):
              logger.error(f"Unexpected error interacting with OpenAI or executing function: {e}", exc_info=True)
              response_text = "(AI 응답 생성 또는 내부 명령 실행 중 오류가 발생했습니다.)"
              
-        # Return final response, order, and debug info
-        return response_text, suggested_order, debug_info # Return 3 values
+        # Return final response, order, debug info, finish reason, and function name
+        return response_text, suggested_order, debug_info, finish_reason, func_name, func_args, func_result
 
     async def on_message(self, message: Message):
         # Ignore messages from the bot itself
@@ -399,9 +413,9 @@ class TradingBot(commands.Bot):
             async with message.channel.typing():
                 try:
                     # LLM 호출 및 디버그 정보까지 함께 돌려받도록 시그니처 변경
-                    response_text, suggested_order, debug_info = await self.get_openai_response(session_info, message.content)
+                    response_text, suggested_order, debug_info, finish_reason, func_name, func_args, func_result = await self.get_openai_response(session_info, message.content)
                     
-                    # Log AI response to DB
+                    # Log AI response to DB (response_text is the final summary from LLM)
                     await self.log_message_to_db(
                         session_uuid=session_info['llm_session_id'], 
                         actor="ai", 
@@ -413,23 +427,45 @@ class TradingBot(commands.Bot):
                     view = None
                     if suggested_order:
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
-                    
-                    # Embed 로 예쁘게 감싸서 전송
-                    embed_title = "💬 AI 응답"
-                    if suggested_order: 
-                         embed_title = "💡 주문 제안"
-                    elif "요약" in message.content or "동향" in message.content or "분석" in message.content:
-                         embed_title = "🔍 검색 결과 요약"
-                         
-                    # Use make_summary_embed defined above
-                    embed = make_summary_embed(
-                        title=embed_title,
-                        summary=response_text, 
-                        footer="KIS Autotrade AI"
-                    )
-                    await message.channel.send(embed=embed, view=view)
 
-                    logger.info(f"[Session:{message.channel.id}] Sent response embed to user.")
+                    # 검색 함수 호출된 경우에만 Embed 로 요약 전송
+                    if finish_reason == 'function_call' and func_name == 'multi_search' and isinstance(func_result, dict):
+                        # Extract information from the structured result of multi_search
+                        summary_text = func_result.get("summary", "(요약 내용을 가져올 수 없습니다.)")
+                        subqueries_count = func_result.get("subqueries_count", "알 수 없음")
+                        snippets_count = func_result.get("snippets_count", "알 수 없음")
+                        
+                        # Extract attempts from the function arguments if available
+                        attempts_tried = "알 수 없음"
+                        if isinstance(func_args, dict):
+                             # The registry passes attempts as int to the actual function
+                             # But LLM might have passed string originally, let's handle both if needed
+                             # However, the registry wrapper handles conversion, so func_args might not be useful here
+                             # Let's use subqueries_count from the result instead of parsing args again
+                             attempts_tried = subqueries_count # Use the count from the result
+
+                        embed = make_summary_embed(
+                            title="🔍 다중 검색 결과 요약", # Updated title
+                            summary=summary_text # Use summary from result dict
+                        )
+                        # 시도한 쿼리 수 필드 추가
+                        embed.add_field(
+                            name="🔢 시도한 검색 쿼리 수",
+                            value=str(attempts_tried),
+                            inline=True
+                        )
+                        # 수집된 스니펫 수를 footer 로 표시
+                        embed.set_footer(text=f"수집된 정보(스니펫): {snippets_count}개")
+
+                        await message.channel.send(embed=embed, view=view)
+                    else:
+                        # 다른 함수 호출 결과 또는 일반 응답은 텍스트로 전송
+                        # If response_text comes from 2nd completion after non-multi_search func, it's string.
+                        # If it's direct response, it's string.
+                        await message.channel.send(response_text, view=view)
+                        
+                    log_msg_type = "Embed" if finish_reason == 'function_call' and func_name == 'multi_search' else "Text"
+                    logger.info(f"[Session:{message.channel.id}] Sent {log_msg_type} response to user.")
 
                 except Exception as e:
                     logger.error(f"[Session:{message.channel.id}] Error processing message: {e}", exc_info=True)
