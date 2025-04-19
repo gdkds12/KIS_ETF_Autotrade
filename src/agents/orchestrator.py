@@ -7,6 +7,7 @@ import openai # Import OpenAI
 import json # For parsing LLM response
 import uuid
 from datetime import datetime
+import asyncio # Add asyncio import
 
 # TODO: Import other agents (InfoCrawler, MemoryRAG, Strategy, RiskGuard, Broker, Briefing)
 
@@ -24,7 +25,6 @@ from src.agents.finnhub_client import FinnhubClient # <-- FinnhubClient 추가
 from qdrant_client import QdrantClient
 # Update import path for DiscordRequestType
 from src.utils.discord_utils import DiscordRequestType
-import asyncio # For potential async operations
 # from src.agents.kis_developer import KisDeveloper # Removed
 # from src.utils.logger import setup_logger # Remove custom logger import
 
@@ -55,6 +55,38 @@ kis_retry_decorator = retry(
 )
 
 class Orchestrator:
+    def _notify_step(self, step: str, status: str):
+        """각 단계 시작/완료/오류 시 Discord로 메시지 전송."""
+        try:
+            # Import necessary components locally within the method
+            from src.utils.discord_utils import DiscordRequestType
+            from src.discord.bot import send_discord_request # Import the async function
+            import asyncio
+            
+            # Ensure there's a running event loop
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                # If no loop is running (e.g., called from sync context without setup),
+                # start a new one temporarily or handle differently.
+                # For simplicity, we log a warning and skip.
+                # A better approach might involve passing the loop or using a queue.
+                logger.warning("No running event loop found to schedule Discord notification.")
+                return
+                
+            # Schedule the async function call in the event loop
+            asyncio.create_task(
+                send_discord_request(DiscordRequestType.CYCLE_STATUS, {"step": step, "status": status})
+            )
+            logger.debug(f"Scheduled Discord notification for step: {step}, status: {status}")
+            
+        except ImportError as e:
+            logger.error(f"Failed to import Discord components for notification: {e}. Is bot.py structured correctly?")
+        except Exception as e:
+            # Catch potential errors during scheduling or import
+            logger.error(f"Error scheduling Discord notification for step {step} ({status}): {e}", exc_info=True)
+            pass # Avoid crashing the orchestrator cycle due to notification failure
+
     def __init__(self, broker: KisBroker, db_session_factory, qdrant_client: QdrantClient):
         """Orchestrator 초기화
 
@@ -116,50 +148,83 @@ class Orchestrator:
     def run_daily_cycle(self):
         """일일 자동매매 사이클 실행 (LLM 중심)
         """
+        self._notify_step("Daily Cycle", "시작")
         logger.info("Starting daily cycle with LLM orchestration...")
+        
         if not self.llm_model_name: # Check if model name is set
             logger.error("LLM model name not set. Cannot run daily cycle.")
+            self._notify_step("Daily Cycle", "오류: LLM 미설정") # Notify error
             return
 
         try:
-            # 1. 정보 수집 및 준비 (InfoCrawler, Market Data, Memory)
+            # 1. 정보 수집 및 준비 (InfoCrawler)
+            self._notify_step("Info Crawler", "시작")
             market_summary = self._run_info_crawler()
+            self._notify_step("Info Crawler", "완료")
+            
+            # 2. 시장 데이터 수집
+            self._notify_step("Market Fetch", "시작")
             market_data = self._fetch_market_data()
+            self._notify_step("Market Fetch", "완료")
+            
+            # 3. 현재 포지션 조회
+            self._notify_step("Get Positions", "시작")
             current_positions = self._get_current_positions()
-            # Retrieve relevant past memories/context using RAG
+            self._notify_step("Get Positions", "완료")
+            
+            # 4. 과거 메모리 검색
+            self._notify_step("Memory RAG", "시작")
             rag_context = self._retrieve_relevant_memory(market_summary)
-
-            # 2. LLM 추론 및 행동 계획 수립
+            self._notify_step("Memory RAG", "완료")
+            
+            # 5. LLM 행동 계획
+            self._notify_step("LLM Action Plan", "시작")
             action_plan_str = self._get_llm_action_plan(market_summary, market_data, current_positions, rag_context)
+            self._notify_step("LLM Action Plan", "완료")
 
             if not action_plan_str:
                 logger.warning("LLM did not provide an action plan. Ending cycle.")
+                self._notify_step("Daily Cycle", "종료: 행동 계획 없음") # Notify end reason
                 return
 
-            # 3. 행동 계획 파싱 및 실행
+            # --- (Action plan parsing remains the same) ---
             try:
-                # Expecting LLM to return a JSON list of actions
                 action_plan = json.loads(action_plan_str)
                 logger.info(f"LLM Action Plan: {action_plan}")
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM action plan JSON: {e}. Plan received: {action_plan_str}")
-                # Maybe try a simpler parsing or ask LLM to reformat
-                # For now, end cycle on parse failure
+                self._notify_step("Daily Cycle", "오류: 행동 계획 파싱 실패") # Notify error
                 return
-
-            # --- 실행 단계 ---
-            # 분리된 함수로 만들어 재사용성 높임
+            # --- End Parsing --- 
+            
+            # 6. 행동 계획 파싱·검증 (Note: _execute_action_plan now mainly handles validation and requests confirmation)
+            self._notify_step("RiskGuard Validation & Confirmation Request", "시작")
             execution_results = self._execute_action_plan(action_plan)
-
-            # 4. 결과 보고 및 저장
-            briefing_content = self._generate_briefing(execution_results)
+            # Check if confirmation was sent or if there were errors/no orders
+            if any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "sent" for res in execution_results):
+                self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (승인 대기 중)")
+            elif any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "failed" for res in execution_results):
+                 self._notify_step("RiskGuard Validation & Confirmation Request", "오류 (승인 요청 실패)")
+            else:
+                 self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (실행할 주문 없음)")
+                 
+            # 7. Briefing 생성
+            self._notify_step("Briefing Generation", "시작")
+            briefing_content = self._generate_briefing(execution_results) # Pass validation results
+            self._notify_step("Briefing Generation", "완료")
+            
+            # 8. 결과 저장 (Validation/Confirmation results)
+            self._notify_step("Save Results", "시작")
             self._upsert_trade_results(execution_results) # Save results to memory/DB
+            self._notify_step("Save Results", "완료")
 
-            logger.info("Daily cycle completed successfully with LLM orchestration.")
-            self.send_notification(briefing_content) # Use new notification method
+            logger.info("Daily cycle completed successfully (pending user confirmation if applicable). LLM orchestration.")
+            self._notify_step("Daily Cycle", "완료 (승인 대기 중)" if any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "sent" for res in execution_results) else "완료")
+            self.send_notification(briefing_content) # Send briefing regardless of orders
 
         except Exception as e:
             logger.error(f"Daily cycle failed: {e}", exc_info=True)
+            self._notify_step("Daily Cycle", "오류") # General error
             self.send_notification(f"Daily cycle failed: {e}", is_error=True)
 
     def _get_llm_action_plan(self, market_summary, market_data, current_positions, rag_context) -> str | None:

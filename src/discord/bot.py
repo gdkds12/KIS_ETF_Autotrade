@@ -26,11 +26,6 @@ from src.db.models import SessionLocal, TradingSession, SessionLog # DB Models
 from sqlalchemy import select
 # ----------------------------------
 
-# Remove direct top-level imports of components initialized in setup_hook
-# from src.agents.orchestrator import Orchestrator # Moved to setup_hook
-# from src.brokers.kis import KisBroker, KisBrokerError # Moved to setup_hook
-# from qdrant_client import QdrantClient # Moved to setup_hook
-
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO) # Configured in main execution block
 
@@ -60,6 +55,22 @@ else:
 # --- Constants & Enums ---
 # Channel ID where order confirmations should be sent (Loaded from settings)
 ORDER_CONFIRMATION_CHANNEL_ID = settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Embed 생성 유틸 (임포트 직후에 위치해야 on_message 등에서 인식됩니다)
+def make_summary_embed(title: str, summary: str, footer: str = None) -> Embed:
+    """요약 텍스트를 Discord Embed로 감싸 반환"""
+    embed = Embed(
+        title=title,
+        description=summary,
+        color=0x3498db, # 파란 계열 색상
+        # Use timezone aware datetime
+        timestamp=datetime.now(timezone.utc)
+    )
+    if footer:
+        embed.set_footer(text=footer)
+    return embed
+# ─────────────────────────────────────────────────────────────────────────────
 
 class TradingBot(commands.Bot):
     def __init__(self):
@@ -404,19 +415,17 @@ class TradingBot(commands.Bot):
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
                     
                     # Embed 로 예쁘게 감싸서 전송
-                    # Determine title based on whether a function was called or not (simple heuristic)
-                    # We don't have the direct function name here easily without more plumbing,
-                    # so let's use a generic title or one based on order suggestion.
                     embed_title = "💬 AI 응답"
                     if suggested_order: 
                          embed_title = "💡 주문 제안"
                     elif "요약" in message.content or "동향" in message.content or "분석" in message.content:
                          embed_title = "🔍 검색 결과 요약"
                          
+                    # Use make_summary_embed defined above
                     embed = make_summary_embed(
                         title=embed_title,
-                        summary=response_text, # response_text might be long, consider splitting later
-                        footer="KIS Autotrade AI" # Simplified footer
+                        summary=response_text, 
+                        footer="KIS Autotrade AI"
                     )
                     await message.channel.send(embed=embed, view=view)
 
@@ -848,6 +857,7 @@ async def send_discord_request(request_type: DiscordRequestType, data: dict) -> 
     Returns:
         True if the message was sent successfully (or placeholder success), False otherwise.
     """
+    global bot # Assuming bot is a global instance
     logger.info(f"Received request from Orchestrator: Type={request_type}, Data Keys={list(data.keys())}")
     
     if request_type == DiscordRequestType.ORDER_CONFIRMATION:
@@ -903,6 +913,52 @@ async def send_discord_request(request_type: DiscordRequestType, data: dict) -> 
             logger.error(f"Failed to send order confirmation message {request_id}: {e}", exc_info=True)
             return False
             
+    elif request_type == DiscordRequestType.CYCLE_STATUS:
+        # data: {"step":"Info Crawler","status":"시작" or "완료" or "오류"}
+        channel_id = settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID # Use the same channel for now
+        if not channel_id:
+            logger.error("Cycle status notification channel ID is not configured.")
+            return False
+            
+        try:
+            channel = bot.get_channel(channel_id) # Use the global bot instance
+            if not channel:
+                 channel = await bot.fetch_channel(channel_id)
+                 if not channel:
+                     logger.error(f"Cannot find cycle status channel with ID: {channel_id}")
+                     return False
+
+            step = data.get("step", "알 수 없음")
+            status = data.get("status", "")
+            
+            # Determine emoji and color based on status
+            if status == "완료":
+                emoji = "✅"
+                color = discord.Color.green()
+            elif status == "오류":
+                emoji = "❌"
+                color = discord.Color.red()
+            else: # Default to "시작" or other statuses
+                emoji = "⏳"
+                color = 0x9b59b6 # Purple color
+
+            embed = discord.Embed(
+                title=f"{emoji} 자동매매 사이클 {status}",
+                description=f"단계: **{step}**",
+                color=color,
+                timestamp=datetime.now(timezone.utc) # Use timezone aware datetime
+            )
+            await channel.send(embed=embed)
+            logger.info(f"Sent cycle status update ({step}: {status}) to channel {channel_id}")
+            return True
+            
+        except discord.errors.Forbidden:
+             logger.error(f"Bot lacks permissions to send messages in channel {channel_id}.")
+             return False
+        except Exception as e:
+            logger.error(f"Failed to send cycle status update ({step}: {status}): {e}", exc_info=True)
+            return False
+            
     elif request_type == DiscordRequestType.GENERAL_NOTIFICATION:
         message = data.get("message", "No message content.")
         # TODO: Implement sending general notifications to a specific channel or user
@@ -947,16 +1003,3 @@ if __name__ == "__main__":
     
     print("Attempting to run the Discord bot...")
     run_discord_bot() 
-
-def make_summary_embed(title: str, summary: str, footer: str = None) -> Embed:
-    """요약 텍스트를 받아 Discord Embed 객체로 반환."""
-    embed = Embed(
-        title=title,
-        description=summary,
-        color=0x3498db,               # 파란 계열 색상
-        # timestamp=datetime.utcnow()   # Use timezone aware datetime
-        timestamp=datetime.now(timezone.utc)
-    )
-    if footer:
-        embed.set_footer(text=footer)
-    return embed 
