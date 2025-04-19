@@ -193,12 +193,14 @@ class TradingBot(commands.Bot):
         message_history.append({"role": "user", "content": user_message})
         
         system_prompt = (
-            "당신은 한국 ETF 시장에 대한 금융 도우미 AI입니다. 사용자의 질문에 답변하고, 필요시 내부 명령(get_balance, get_positions, get_market_summary, get_quote, search_web, search_symbols, get_market_summary 등)을 호출하여 정보를 얻습니다."
-            " 시장 분석, 종목 정보 제공, 현재가 조회, 뉴스 검색, 웹 검색 등을 수행합니다. "
-            "투자 관련 조언은 제공하지만, 최종 결정은 사용자의 책임임을 명시해야 합니다."
-            "만약 매수 또는 매도 주문을 제안해야 한다면, 반드시 다음 JSON 형식으로 제안 내용을 응답 끝에 포함시키세요: "
-            '\n{\n  "suggested_order": {\n    "symbol": "종목코드 (예: 069500)",\n    "action": "buy 또는 sell",\n    "quantity": 주문수량 (정수),\n    "price": 주문가격 (지정가=실제가격, 시장가=0)\n  }\n}'
-            "주문 제안이 없다면, JSON 부분을 포함하지 마세요."
+            "당신은 금융 도우미 AI입니다. 필요한 경우 아래 내부 명령을 호출해 실시간 데이터를 가져오세요:\n"
+            "- get_balance() → 계좌 잔고\n"
+            "- get_positions() → 보유 포지션\n"
+            "- get_historical_data(symbol, timeframe, start_date, end_date, period) → 과거 시세(일·주·월봉)\n"
+            "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → 현금 주문 실행\n"
+            "- get_market_summary(query) → 시장 동향 요약 (query 필요)\n" # Added query parameter info
+            "- get_quote(symbol) → 현재가 조회\n" # Added get_quote
+            "- search_web(query) → 웹 검색\n" # Added search_web
             "모든 답변은 한국어로 제공하세요."
         )
 

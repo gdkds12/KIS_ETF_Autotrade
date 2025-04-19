@@ -129,56 +129,24 @@ def get_quote(symbol: str) -> str:
 
 @command
 def get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str) -> list:
-    """
-    과거 시세(일/주/월봉)를 조회합니다.
-    - symbol: 종목 코드 (e.g. "069500")
-    - timeframe: 'D', 'W' 또는 'M'
-    - start_date, end_date: YYYYMMDD 형식 (필요 없으면 빈 문자열)
-    - period: (일봉 조회 시) 기간(정수)
-    """
+    """과거 시세 데이터 조회 (일·주·월봉 등)."""
     if ORCHESTRATOR is None:
         return []
-    # 문자열 파싱
-    # KIS 브로커의 get_historical_data는 pandas DataFrame을 반환하므로 변환 필요
-    pd_data = ORCHESTRATOR.broker.get_historical_data(
+    # period는 문자열로 들어오므로 int 변환
+    # KIS get_historical_data now returns list of dicts directly
+    return ORCHESTRATOR.broker.get_historical_data(
         symbol=symbol,
         timeframe=timeframe,
         start_date=start_date or None,
         end_date=end_date or None,
-        period=int(period) if period else None
+        period=int(period) if period else None # Keep int conversion with check
     )
-    # DataFrame → JSON serializable list of dict
-    records = []
-    # Pandas DataFrame의 인덱스와 행을 순회
-    # reset_index()를 사용하여 인덱스를 일반 컬럼으로 변환 ('date' 등)
-    for idx, row in pd_data.reset_index().iterrows():
-        # 날짜 형식 변환 (Pandas Timestamp -> YYYY-MM-DD string)
-        rec = {"date": row['index'].strftime("%Y-%m-%d")} # 날짜 컬럼명 확인 필요 (index or date?)
-        # 나머지 컬럼 순회
-        for col in pd_data.columns:
-            # numpy 타입도 정수/실수로 변환
-            val = row[col]
-            if hasattr(val, "item"): # numpy scaler type 체크
-                val = val.item()
-            # NaN 값은 None으로 변환 (JSON 호환)
-            if pd.isna(val):
-                val = None
-            rec[col] = val
-        records.append(rec)
-    return records
 
 @command
 def order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell_code: str) -> dict:
-    """
-    현금 주문을 실행합니다.
-    - symbol: 종목 코드
-    - quantity: 수량 (정수 문자열)
-    - price: 주문 가격 (정수 문자열, 시장가=0)
-    - order_type: "00" (지정가) 또는 "01" (시장가)
-    - buy_sell_code: "02" 매수, "01" 매도
-    """
+    """현금 주문 실행 (시장가·지정가)."""
     if ORCHESTRATOR is None:
-        return {}
+        return {"error": "orchestrator not ready"}
     return ORCHESTRATOR.broker.order_cash(
         symbol=symbol,
         quantity=int(quantity),
