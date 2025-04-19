@@ -3,7 +3,7 @@ import logging
 import requests # Use requests library directly
 from requests.exceptions import RequestException
 import openai # Keep OpenAI for summarization
-# import finnhub # Remove finnhub client import
+import finnhub # Remove finnhub client import
 
 from src.config import settings
 
@@ -21,6 +21,10 @@ else:
     logger.warning("OPENAI_API_KEY not set. InfoCrawler LLM summary will be basic.")
 
 class InfoCrawler:
+    """
+    웹사이트 크롤링, 뉴스 검색 등을 수행하는 클래스입니다.
+    """
+
     def __init__(self):
         """InfoCrawler 초기화 (Finnhub + Web Search)"""
         # Finnhub 설정

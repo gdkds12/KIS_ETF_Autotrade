@@ -193,8 +193,8 @@ class TradingBot(commands.Bot):
         message_history.append({"role": "user", "content": user_message})
         
         system_prompt = (
-            "당신은 한국 ETF 시장에 대한 금융 도우미 AI입니다. 사용자의 질문에 답변하고, 필요시 내부 명령(get_balance, get_positions, get_market_summary 등)을 호출하여 정보를 얻습니다."
-            " 시장 분석, 종목 정보 제공, 간단한 계산 등을 수행합니다. "
+            "당신은 한국 ETF 시장에 대한 금융 도우미 AI입니다. 사용자의 질문에 답변하고, 필요시 내부 명령(get_balance, get_positions, get_market_summary, get_quote, search_web, search_symbols, get_market_summary 등)을 호출하여 정보를 얻습니다."
+            " 시장 분석, 종목 정보 제공, 현재가 조회, 뉴스 검색, 웹 검색 등을 수행합니다. "
             "투자 관련 조언은 제공하지만, 최종 결정은 사용자의 책임임을 명시해야 합니다."
             "만약 매수 또는 매도 주문을 제안해야 한다면, 반드시 다음 JSON 형식으로 제안 내용을 응답 끝에 포함시키세요: "
             '\n{\n  "suggested_order": {\n    "symbol": "종목코드 (예: 069500)",\n    "action": "buy 또는 sell",\n    "quantity": 주문수량 (정수),\n    "price": 주문가격 (지정가=실제가격, 시장가=0)\n  }\n}'

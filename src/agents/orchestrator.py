@@ -19,11 +19,14 @@ from src.agents.memory_rag import MemoryRAG
 # from src.agents.strategy import TradingStrategy # <- 이 줄 삭제됨
 from src.agents.risk_guard import RiskGuard
 from src.agents.briefing import BriefingAgent
+from src.agents.finnhub_client import FinnhubClient # <-- FinnhubClient 추가
 # from src.db.models import SessionLocal # If direct DB session needed here
 from qdrant_client import QdrantClient
 # Update import path for DiscordRequestType
 from src.utils.discord_utils import DiscordRequestType
 import asyncio # For potential async operations
+from src.agents.kis_developer import KisDeveloper
+from src.utils.logger import setup_logger
 
 # NEW: function registry
 from src.utils.registry import command, COMMANDS
@@ -65,6 +68,9 @@ class Orchestrator:
         self.qdrant_client = qdrant_client
         self.llm_model_name = None # Store model name
 
+        # Initialize Finnhub Client
+        self.finnhub = FinnhubClient(api_key=settings.FINNHUB_API_KEY)
+
         # Initialize OpenAI API Key
         if settings.OPENAI_API_KEY:
             # Setting openai.api_key globally, consider client instance if needed
@@ -76,7 +82,8 @@ class Orchestrator:
             logger.warning("OPENAI_API_KEY not set. Orchestrator LLM functionality will be disabled.")
 
         # Initialize Agents
-        self.info_crawler = InfoCrawler() # LLM model could be passed here if needed by crawler
+        self.kis = KisDeveloper(account_info=settings.KIS_ACCOUNT)
+        self.info_crawler = InfoCrawler(settings.SERPAPI_API_KEY)
         self.memory_rag = MemoryRAG(db_session_factory=self.db_session_factory) # Pass factory
         # Define target symbols - should ideally come from a dynamic source or config
         target_etfs = settings.TARGET_SYMBOLS # Use symbols from config
