@@ -62,14 +62,15 @@ class InfoCrawler:
             return " ".join(raw_texts)[:500] + ("..." if len(" ".join(raw_texts)) > 500 else "")
 
         context = "\n".join([f"- {text}" for text in raw_texts])
-        prompt = f"\"\"\
-        다음은 최근 수집된 시장 관련 뉴스 및 정보 스니펫입니다. 이 정보들을 종합하여 현재 시장 상황과 주요 이슈를 간결하게 한국어로 요약해주세요.
+        prompt = f"""
+        다음은 최근 수집된 시장 관련 뉴스 및 정보 스니펫입니다. 이 정보들을 종합하여
+        현재 시장 상황과 주요 이슈를 간결하게 한국어로 요약해주세요.
 
         [수집된 정보]
         {context}
 
         [시장 상황 요약]
-        \"\"\"
+        """
 
         try:
             logger.info(f"Requesting LLM summary for {len(raw_texts)} snippets...")
