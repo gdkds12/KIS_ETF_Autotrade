@@ -34,6 +34,16 @@ class KisBrokerError(Exception):
         self.response_data = response_data
 
 class KisBroker:
+    # --- TR ID 매핑 테이블 (실전용) ---
+    TR_IDS = {
+        "get_balance":       "TTTC8434R",
+        "get_positions":     "TTTC8434R",
+        "get_quote":         "FHKST01010100",
+        "order_cash_buy":    "TTTC0801U", # Diff는 매수/매도 순서가 반대였으나, 코드 로직상 buy=02가 맞음
+        "order_cash_sell":   "TTTC0802U",
+        "get_historical_data": "FHKST03010100" # 추가 (get_historical_data 용)
+    }
+
     def __init__(self, app_key: str, app_secret: str, base_url: str, cano: str, acnt_prdt_cd: str, virtual_account: bool = True):
         """KIS Broker 초기화
 
@@ -75,6 +85,16 @@ class KisBroker:
         if self.access_token and self.token_expires_at:
             return datetime.now() < self.token_expires_at - timedelta(minutes=5)
         return False
+
+    def _compute_tr_id(self, key: str) -> str:
+        """TR_IDS에서 TR ID를 조회하고, 모의투자이면 T->V 치환."""
+        base = self.TR_IDS.get(key)
+        if not base:
+            raise ValueError(f"Unknown TR key: {key}")
+        if self.virtual_account and base.startswith("T"):
+            # 모의투자용 TR ID 첫 글자 T -> V
+            return "V" + base[1:]
+        return base
 
     def get_token(self) -> dict:
         """KIS API 액세스 토큰을 발급/재발급 받습니다."""
@@ -129,17 +149,13 @@ class KisBroker:
         url = f"{self.base_url}{path}"
         headers = self.session.headers.copy()
         headers["tr_id"] = tr_id
-        if self.virtual_account:
-            # 모의투자 TR ID는 "V" + 실전 TR ID 인 경우가 많음
-            if not tr_id.startswith('V'):
-                 logger.debug(f"Prepending 'V' to TR_ID for virtual trading: {tr_id} -> V{tr_id}")
-                 headers["tr_id"] = f"V{tr_id}"
-            # 모의투자는 tr_cont 불필요 (실전은 "", 모의는 미설정 또는 "M")
-            # KIS 최신 스펙 확인 필요
-            headers.pop("tr_cont", None)
-        else:
-             headers["tr_cont"] = "" # 실전투자 연속거래 ""
         
+        # Set tr_cont based on virtual_account (needed for real accounts)
+        if not self.virtual_account:
+             headers["tr_cont"] = "" # 실전투자 연속거래
+        else:
+            headers.pop("tr_cont", None) # 모의투자는 제거
+
         try:
             req_params = {'url': url, 'headers': headers, 'timeout': 15} # 기본 타임아웃 설정
             if method.upper() == 'GET':
@@ -176,7 +192,7 @@ class KisBroker:
     def get_quote(self, symbol: str) -> dict:
         """주식 현재가 시세(체결)를 조회합니다."""
         path = "/uapi/domestic-stock/v1/quotations/inquire-price"
-        tr_id = "FHKST01010100"
+        tr_id = self._compute_tr_id("get_quote") # Use computed TR ID
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}
         try:
             response_data = self._request("GET", path, tr_id, params=params)
@@ -188,8 +204,9 @@ class KisBroker:
     def order_cash(self, symbol: str, quantity: int, price: int, order_type: str, buy_sell_code: str) -> dict:
         """현금 매수/매도 주문을 실행합니다."""
         path = "/uapi/domestic-stock/v1/trading/order-cash"
-        # TR ID는 _request 메서드에서 virtual_account 여부에 따라 'V'가 붙음
-        tr_id = "TTTC0802U" if buy_sell_code == "02" else "TTTC0801U"
+        # 매수/매도에 따른 TR key 사용 (02: Buy, 01: Sell)
+        key = "order_cash_buy" if buy_sell_code == "02" else "order_cash_sell"
+        tr_id = self._compute_tr_id(key) # Use computed TR ID
         payload = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
@@ -213,8 +230,7 @@ class KisBroker:
     def get_balance(self) -> dict:
         """계좌 잔고 현황을 조회합니다 (현금, 총자산, 총손익 등)."""
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"
-        # TODO: KIS 실계좌/모의계좌 잔고조회 TR ID 확인 필요 (TTTC8434R? VTTC8434R?)
-        tr_id = "TTTC8434R" # 예시 TR ID
+        tr_id = self._compute_tr_id("get_balance") # Use computed TR ID
         params = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
@@ -258,8 +274,7 @@ class KisBroker:
     def get_positions(self) -> list[dict]:
         """계좌의 보유 종목 목록을 조회합니다."""
         path = "/uapi/domestic-stock/v1/trading/inquire-balance"
-        # TODO: 잔고조회와 동일한 TR ID 사용 가능성 높음 (TTTC8434R? VTTC8434R?)
-        tr_id = "TTTC8434R" # 예시 TR ID
+        tr_id = self._compute_tr_id("get_positions") # Use computed TR ID
         params = {
             "CANO": self.cano,
             "ACNT_PRDT_CD": self.acnt_prdt_cd,
@@ -334,8 +349,7 @@ class KisBroker:
             Pandas DataFrame (index=datetime, columns=[open, high, low, close, volume, ...])
         """
         path = "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice"
-        # TODO: KIS 기간별 주가 TR ID 확인 필요 (FHKST03010100?)
-        tr_id = "FHKST03010100" # 예시 TR ID
+        tr_id = self._compute_tr_id("get_historical_data") # Use computed TR ID
 
         if timeframe not in ['D', 'W', 'M']:
             raise ValueError("Invalid timeframe. Use 'D', 'W', or 'M'.")
