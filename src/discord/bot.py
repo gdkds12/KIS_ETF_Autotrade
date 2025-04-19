@@ -14,7 +14,7 @@ from enum import Enum, auto
 import aiohttp # Added for making HTTP requests to FastAPI
 
 # NEW – registry import (Should be kept from previous patch)
-from src.utils.registry import COMMANDS
+from src.utils.registry import COMMANDS, set_orchestrator
 
 from src.config import settings
 # Placeholder for backend client - might replace with direct agent calls or specific LLM client
@@ -23,6 +23,12 @@ from src.db.models import SessionLocal, TradingSession, SessionLog # DB Models
 from sqlalchemy import select
 # TODO: Need a way to interact back with Orchestrator or FastAPI
 # from some_orchestrator_client import notify_orchestrator_of_decision
+
+# --- Registry and Orchestrator setup imports ---
+from src.agents.orchestrator import Orchestrator
+from src.brokers.kis import KisBroker, KisBrokerError # Import KisBroker
+from qdrant_client import QdrantClient # Import QdrantClient
+# -----------------------------------------------
 
 logger = logging.getLogger(__name__)
 # logging.basicConfig(level=logging.INFO) # Configured in main execution block
@@ -65,8 +71,71 @@ class TradingBot(commands.Bot):
         self.active_sessions = {} # thread_id: {user_id, last_interaction_time, llm_session_id, etc.}
         self.db_session_factory = SessionLocal # Store factory
         # self.backend_client = BackendClient() # Placeholder for backend communication
+        # Add placeholders for broker and qdrant client if needed elsewhere
+        self.broker: KisBroker | None = None 
+        self.qdrant_client: QdrantClient | None = None
+        self.orchestrator: Orchestrator | None = None # Store orchestrator instance
 
     async def setup_hook(self):
+        # --- Initialize Broker, Qdrant, Orchestrator --- 
+        try:
+            # 1. Initialize Broker
+            if not all([settings.APP_KEY, settings.APP_SECRET, settings.CANO, settings.ACNT_PRDT]):
+                 logger.error("Missing required KIS API credentials or account info in settings for bot initialization.")
+                 # Depending on requirements, you might want to raise an error or prevent bot startup
+                 self.broker = None
+            else:
+                is_virtual = settings.KIS_VIRTUAL_ACCOUNT
+                base_url = settings.KIS_VIRTUAL_URL if is_virtual else settings.BASE_URL
+                self.broker = KisBroker(
+                    app_key=settings.APP_KEY,
+                    app_secret=settings.APP_SECRET,
+                    base_url=base_url,
+                    cano=settings.CANO,
+                    acnt_prdt_cd=settings.ACNT_PRDT,
+                    virtual_account=is_virtual
+                )
+                # Initial token check/fetch (optional but good practice)
+                self.broker.check_token()
+                logger.info("KIS Broker initialized within Discord Bot.")
+
+            # 2. Initialize Qdrant Client
+            try:
+                self.qdrant_client = QdrantClient(
+                    url=settings.QDRANT_URL,
+                    api_key=settings.QDRANT_API_KEY,
+                    timeout=10
+                )
+                _ = self.qdrant_client.get_collections() # Test connection
+                logger.info("Qdrant client initialized within Discord Bot.")
+            except Exception as q_e:
+                 logger.error(f"Failed to initialize Qdrant client in bot: {q_e}. RAG features might fail.", exc_info=True)
+                 self.qdrant_client = None # Set to None on failure
+
+            # 3. Initialize Orchestrator (only if broker initialized)
+            if self.broker:
+                self.orchestrator = Orchestrator(
+                    broker=self.broker,
+                    db_session_factory=self.db_session_factory, # Use the bot's factory
+                    qdrant_client=self.qdrant_client # Pass initialized client (or None)
+                )
+                logger.info("Orchestrator initialized within Discord Bot.")
+                
+                # 4. Bind registry to the live orchestrator instance
+                set_orchestrator(self.orchestrator)
+                logger.info("Global orchestrator reference set for command registry.")
+            else:
+                 logger.error("Orchestrator cannot be initialized because Broker failed to initialize.")
+                 self.orchestrator = None
+                 # Handle the case where Orchestrator cannot be set (e.g., disable function calls?)
+                 # set_orchestrator(None) # Explicitly set to None
+
+        except Exception as init_e:
+            logger.error(f"Critical error during bot component initialization: {init_e}", exc_info=True)
+            # Decide how to handle critical init failure (e.g., shutdown bot)
+            # await self.close()
+            # return # Prevent further setup
+
         # Sync commands (globally or to a specific guild)
         if GUILD_ID:
             guild = discord.Object(id=GUILD_ID)
