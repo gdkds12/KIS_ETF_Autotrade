@@ -103,11 +103,24 @@ def search_web(query: str) -> list:
     return ORCHESTRATOR.info_crawler.search_web(query=query)
 
 @command
-def comprehensive_trend(query: str) -> str:
-    """여러 API 호출을 통해 최근 미국 시장 동향을 종합 조사해 요약합니다."""
+def multi_search(query: str, attempts: str = "3") -> str:
+    """여러 번의 news/web 검색을 병렬 수행해 종합 요약합니다."""
     if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'info_crawler'):
-        return "(Orchestrator 또는 InfoCrawler 준비되지 않음)"
-    return ORCHESTRATOR.info_crawler.comprehensive_trend(query=query)
+        return "(Orchestrator 또는 InfoCrawler 미준비)"
+    # attempts는 문자열로 들어오므로 int 변환
+    try:
+        n = int(attempts)
+    except ValueError:
+        logger.warning(f"Invalid attempts value '{attempts}', defaulting to 3.")
+        n = 3
+    except Exception as e: # Catch other potential errors during conversion
+        logger.error(f"Error converting attempts '{attempts}' to int: {e}, defaulting to 3.")
+        n = 3
+        
+    # Ensure n is within reasonable bounds if needed (e.g., 1 to 10)
+    n = max(1, min(n, 10)) # Example bounds
+    
+    return ORCHESTRATOR.info_crawler.multi_search(query=query, attempts=n)
 
 @command
 def get_quote(symbol: str) -> str:

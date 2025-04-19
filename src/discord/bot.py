@@ -202,9 +202,9 @@ class TradingBot(commands.Bot):
             "- get_overseas_trading_status() → 해외 주식 거래 가능 여부 조회\n"
             "- get_market_summary(query) → Finnhub 기반 시장 동향 요약 (ETF·지수 등 뉴스성 요약)\n"
             "- search_news(query) → Finnhub API를 이용한 최신 뉴스 리스트 검색 (시장 동향, 기업 이슈 등)\n"
-            "- comprehensive_trend(query) → 뉴스·웹검색을 다중 서브쿼리로 수행해 종합 시장 동향 조사\n"
+            "- multi_search(query, attempts) → query를 바탕으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 종합 요약\n"
             "- search_web(query)       → 단일 쿼리 일반 웹 검색(SerpAPI)\n"
-            "— **종합 시장 동향** 요청(예: \"최근 미국 시장 동향 파악해줘\")에는 `comprehensive_trend`를, **단일 이슈 조사**에는 `search_web`을 사용하세요.\n"
+            "— **종합적인 조사**가 필요할 때는 `multi_search`를, **단순 웹 검색**은 `search_web`을 사용하세요.\n"
             "모든 답변은 한국어로 제공하세요."
         )
 

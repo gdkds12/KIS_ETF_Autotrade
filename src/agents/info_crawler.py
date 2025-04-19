@@ -196,55 +196,66 @@ class InfoCrawler:
         logger.info(f"Generated market summary (length: {len(llm_summary)}).")
         return llm_summary
 
-    def comprehensive_trend(self, query: str, max_results: int = 5) -> str:
-        """여러 API 호출로 최근 미국 시장 동향을 종합 조사하고 요약합니다."""
-        logger.info(f"Starting comprehensive trend analysis for query: '{query}'")
-        # 1) 주요 서브쿼리 정의
-        subqueries = [
-            query,
-            "최근 미국 S&P 500 지수 동향",
-            "최근 미국 나스닥 지수 변동",
-            "미국 연준(Fed) 최신 정책 업데이트",
-            "최근 미국 소비자물가(CPI) 변화"
-        ]
-        aggregated_snippets = []
-        # 2) 각 서브쿼리별로 뉴스와 웹검색 동시 수행
-        for q in subqueries:
-            logger.debug(f"Processing subquery: '{q}'")
-            try:
-                news_items = self.search_news(query=q)[:max_results]
-                time.sleep(0.1) # Add small delay between API calls
-                web_items  = self.search_web(query=q)[:max_results]
-                time.sleep(0.1)
-            except Exception as e:
-                 logger.error(f"Error fetching data for subquery '{q}': {e}", exc_info=True)
-                 continue # Skip this subquery on error
-                 
-            # 요약할 수 있도록 간단히 텍스트화
-            snippet = f"## [{q}]\n"
-            snippet += "\n".join(f"- NEWS: {n.get('headline') or n.get('title', '')} ({n.get('summary') or n.get('snippet', '')})"
-                                  for n in news_items if n) + "\n"
-            snippet += "\n".join(f"- WEB : {w.get('title', '')} ({w.get('snippet', '')})"
-                                  for w in web_items if w)
-            aggregated_snippets.append(snippet)
+    def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> str:
+        """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
+        logger.info(f"Performing multi-search for query: '{query}' with {attempts} attempts (max {max_attempts})")
+        # 1) 시도 횟수 보정
+        tries = max(3, min(int(attempts), max_attempts)) # Ensure attempts is int
 
-        if not aggregated_snippets:
-             logger.warning("No snippets collected from subqueries.")
-             return "(종합 동향 정보를 수집하지 못했습니다.)"
-             
-        # 3) LLM 프롬프트 생성 및 요약
-        combined = "\n\n".join(aggregated_snippets)
+        # 2) 기본 키워드 확장 리스트 (동적 변형)
+        suffixes = ["최신 뉴스", "시사 동향", "시장 분석", "지표", "최근 변화", "전망", "영향", "관련주"] # Expanded suffixes
+        # Ensure unique subqueries, prioritizing the original query
+        subqueries_set = {query}
+        for s in suffixes:
+            subqueries_set.add(f"{query} {s}")
+            if len(subqueries_set) >= tries:
+                break
+        subqueries = list(subqueries_set)
+        logger.debug(f"Generated {len(subqueries)} subqueries: {subqueries}")
+
+        # 3) 각 서브쿼리별로 news + web 검색 결과 스니펫 수집 (Error handling per subquery)
+        snippets = []
+        for q in subqueries:
+            q_snippets = []
+            try:
+                news_items = self.search_news(query=q)[:1] # 각 쿼리당 최상위 1건
+                time.sleep(0.1) # API 간격
+                web_items = self.search_web(query=q)[:1]
+                time.sleep(0.1)
+
+                if news_items:
+                    item = news_items[0]
+                    title = item.get("headline") or item.get("title") or ""
+                    desc = item.get("summary") or item.get("snippet") or ""
+                    q_snippets.append(f"- [뉴스] {q}: {title} ({desc})")
+                if web_items:
+                    item = web_items[0]
+                    title = item.get('title') or ""
+                    desc = item.get('snippet') or ""
+                    q_snippets.append(f"- [웹] {q}: {title} ({desc})")
+                    
+            except Exception as e:
+                 logger.error(f"Error during multi-search for subquery '{q}': {e}", exc_info=True)
+                 # Optionally add an error snippet or just continue
+                 q_snippets.append(f"- [오류] '{q}' 검색 중 오류 발생: {e}")
+
+            if q_snippets:
+                snippets.extend(q_snippets)
+                
+        if not snippets:
+            logger.warning(f"Multi-search for '{query}' yielded no results.")
+            return "(관련 정보를 찾을 수 없습니다.)"
+
+        # 4) LLM 요약 프롬프트 구성
+        combined = "\n".join(snippets)
         prompt = (
-            f"사용자 요청: {query}\n\n"
-            f"아래는 다양한 소스에서 수집한 최근 미국 시장 동향입니다:\n\n{combined}\n\n"
-            "위 내용을 바탕으로 한국어로 간결하게 종합 분석해 주세요."
+            f"사용자가 요청한 주제: {query}\n\n"
+            f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
+            "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
         )
-        logger.debug(f"Generated prompt for comprehensive trend summarization:
+        logger.debug(f"Generated prompt for multi-search summary:
 {prompt[:500]}...")
-        # 내부 요약용 LLM 호출
-        summary = self._summarize_with_llm(prompt)
-        logger.info(f"Generated comprehensive trend summary (length: {len(summary)}).")
-        return summary
+        return self._summarize_with_llm(prompt)
 
     def search_web(self, query: str, num_results: int = 5) -> list[dict]:
         """
