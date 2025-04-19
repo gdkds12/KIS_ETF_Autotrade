@@ -106,6 +106,20 @@ class KisBroker:
             logger.error(f"Unexpected error while getting token: {e}", exc_info=True)
             raise KisBrokerError(f"Unexpected error during token request: {e}") from e
 
+    def check_token(self) -> bool:
+        """
+        현재 토큰이 유효한지 확인하고,
+        만약 만료되었으면 새 토큰을 발급받아 갱신합니다.
+        성공하면 True, 실패하면 False를 반환합니다.
+        """
+        if self._is_token_valid():
+            return True
+        try:
+            self.get_token()
+            return True
+        except KisBrokerError:
+            return False
+
     def _request(self, method: str, path: str, tr_id: str, params: dict = None, data: dict = None) -> dict:
         """KIS API 요청을 처리하는 내부 메서드"""
         if not self._is_token_valid():
