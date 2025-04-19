@@ -206,20 +206,21 @@ class TradingBot(commands.Bot):
         message_history.append({"role": "user", "content": user_message})
         
         system_prompt = (
-            "당신은 금융 도우미 AI입니다. 사용자 질문 의도에 따라 적합한 내부 명령을 호출해 실시간 데이터나 정보를 가져오세요:\n"
-            "- get_balance() → 계좌 잔고 조회\n"
-            "- get_positions() → 보유 포지션 조회\n"
-            "- get_historical_data(symbol, timeframe, start_date, end_date, period) → 과거 시세(일·주·월봉)\n"
-            "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → 현금 주문 실행\n"
-            "- get_quote(symbol) → 국내 주식 실시간 시세 조회\n"
-            "- get_overseas_trading_status() → 해외 주식 거래 가능 여부 조회\n"
-            "- get_market_summary(query) → Finnhub 기반 시장 동향 요약 (ETF·지수 등 뉴스성 요약)\n"
-            "- search_news(query) → Finnhub API를 이용한 최신 뉴스 리스트 검색 (시장 동향, 기업 이슈 등)\n"
-            "- multi_search(query, attempts) → query를 바탕으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 종합 요약\n"
-            "- search_web(query)       → 단일 쿼리 일반 웹 검색(SerpAPI)\n"
-            "— **'동향', '현황', '추세'** 같은 키워드가 포함된 질문에는 **검색 없이** 답변하지 말고 반드시 `multi_search`를 호출하여 데이터를 수집·분석하세요.\n"
-            "— 일반 정책·상세 사안 조사엔 `search_web`, 뉴스 중심 분석엔 `search_news` 또는 `get_market_summary`도 활용하세요.\n"
+            "당신은 금융 도우미 AI입니다. 사용자 질문 의도에 따라 적합한 내부 명령을 호출해 실시간 데이터나 정보를 가져오세요:\\n"
+            "- get_balance() → 계좌 잔고 조회\\n"
+            "- get_positions() → 보유 포지션 조회\\n"
+            "- get_historical_data(symbol, timeframe, start_date, end_date, period) → 과거 시세(일·주·월봉)\\n"
+            "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → 현금 주문 실행\\n"
+            "- get_quote(symbol) → 국내 주식 실시간 시세 조회\\n"
+            "- get_overseas_trading_status() → 해외 주식 거래 가능 여부 조회\\n"
+            "- get_market_summary(query) → Finnhub 기반 시장 동향 요약 (ETF·지수 등 뉴스성 요약)\\n"
+            "- search_news(query) → Finnhub API를 이용한 최신 뉴스 리스트 검색 (시장 동향, 기업 이슈 등)\\n"
+            "- multi_search(query, attempts) → query를 바탕으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 종합 요약\\n"
+            "- search_web(query)       → 단일 쿼리 일반 웹 검색(SerpAPI)\\n"
+            "— **'동향', '현황', '추세'** 같은 키워드가 포함된 질문에는 **검색 없이** 답변하지 말고 반드시 `multi_search`를 호출하여 데이터를 수집·분석하세요.\\n"
+            "— 일반 정책·상세 사안 조사엔 `search_web`, 뉴스 중심 분석엔 `search_news` 또는 `get_market_summary`도 활용하세요.\\n"
             "모든 답변은 한국어로 제공하세요."
+            "\\n※ 검색 함수 호출 시 '잠시만 기다려 주세요' 같은 중간 안내문 없이, 함수 결과를 반영한 최종 답변을 즉시 제공하세요."
         )
 
         messages = [
@@ -428,81 +429,37 @@ class TradingBot(commands.Bot):
                     if suggested_order:
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
 
-                    # 함수 호출별로 임베드 처리
+                    # 함수 호출 후, 결과를 Embed 로 표시하거나 텍스트로 응답
                     if finish_reason == 'function_call':
-                        embed = None
-                        # 1) 다중 검색 결과 요약
+                        # ■ 다중 검색 결과
                         if func_name == 'multi_search' and isinstance(func_result, dict):
-                            summary_text    = func_result.get('summary', '(요약 내용을 가져올 수 없습니다.)')
-                            subqueries_count = func_result.get('subqueries_count', '알 수 없음')
-                            snippets_count   = func_result.get('snippets_count', '알 수 없음')
+                            summary_text = func_result.get("summary", "(요약을 가져올 수 없습니다.)")
+                            subq = func_result.get("subqueries_count", "?")
+                            snippets = func_result.get("snippets_count", "?")
                             embed = make_summary_embed(
                                 title="🔍 다중 검색 결과 요약",
                                 summary=summary_text
                             )
-                            embed.add_field(
-                                name="🔢 시도한 검색 쿼리 수",
-                                value=str(subqueries_count),
-                                inline=True
-                            )
-                            embed.set_footer(text=f"수집된 정보(스니펫): {snippets_count}개")
-                        # 2) 뉴스 검색 결과
-                        elif func_name == 'search_news' and isinstance(func_result, list):
-                            lines = []
-                            for item in func_result[:5]: # Show top 5 results
-                                headline = item.get('headline') or item.get('title') or ''
-                                source   = item.get('source')   or item.get('summary') or ''
-                                # Truncate long headlines/sources if necessary
-                                headline = (headline[:70] + '...') if len(headline) > 70 else headline
-                                source = (source[:50] + '...') if len(source) > 50 else source
-                                lines.append(f"• {headline} ({source})")
-                            description = '\n'.join(lines) if lines else '(뉴스 결과가 없습니다)'
-                            embed = make_summary_embed(
-                                title="📰 뉴스 검색 결과",
-                                summary=description
-                            )
-                        # 3) 웹 검색 결과
-                        elif func_name == 'search_web' and isinstance(func_result, list):
-                            lines = []
-                            for item in func_result[:5]: # Show top 5 results
-                                title = item.get('title', '')
-                                link  = item.get('link', '')
-                                snippet = item.get('snippet', '') # Get snippet too
-                                # Truncate long titles/snippets
-                                title = (title[:80] + '...') if len(title) > 80 else title
-                                snippet = (snippet[:100] + '...') if len(snippet) > 100 else snippet
-                                if link:
-                                     lines.append(f"• [{title}]({link})\n  _{snippet}_")
-                                else:
-                                     lines.append(f"• {title}\n  _{snippet}_")
-                            description = '\n\n'.join(lines) if lines else '(웹 검색 결과가 없습니다)'
-                            embed = make_summary_embed(
-                                title="🌐 웹 검색 결과",
-                                summary=description
-                            )
-                        # 4) 시장 동향 요약
-                        elif func_name == 'get_market_summary':
-                            # get_market_summary's result is already summarized by LLM in response_text
-                            embed = make_summary_embed(
-                                title="📈 시장 동향 요약",
-                                summary=response_text # Use the LLM's final response text
-                            )
-                            
-                        # --- Add other function call specific Embeds here ---
-                        # elif func_name == 'get_balance': ...
-                        # elif func_name == 'get_positions': ...
-                        # etc.
-                        
-                        # 최종 전송
-                        if embed:
+                            embed.add_field(name="🔢 시도한 쿼리 수", value=str(subq), inline=True)
+                            embed.set_footer(text=f"수집된 스니펫: {snippets}개")
                             await message.channel.send(embed=embed, view=view)
-                            log_msg_type = f"Embed ({func_name})"
+                            log_msg_type = f"Embed ({func_name})" # Log embed type
+                        # ■ 뉴스 검색 결과
+                        elif func_name == 'search_news' and isinstance(func_result, list):
+                            headlines = [item.get('headline') or item.get('title', '') for item in func_result[:5]]
+                            embed = make_summary_embed(
+                                title="📰 검색된 최신 뉴스",
+                                summary="\\n".join(f"- {h}" for h in headlines if h) or "(뉴스 결과 없음)" # Add fallback message
+                            )
+                            await message.channel.send(embed=embed, view=view)
+                            log_msg_type = f"Embed ({func_name})" # Log embed type
+                        # ■ 기타 함수 호출 시 LLM 최종 요약 텍스트
                         else:
-                            # If function was called but no specific embed handler, send text
+                            # Send the final LLM response text for other function calls
                             await message.channel.send(response_text, view=view)
-                            log_msg_type = f"Text (unhandled func: {func_name})"
+                            log_msg_type = f"Text ({func_name} result)" # Log text type with function name
                     else:
-                        # 함수 호출이 아니면 일반 텍스트 전송
+                        # 함수 호출 없이 일반 응답
                         await message.channel.send(response_text, view=view)
                         log_msg_type = "Text (direct)"
                         
