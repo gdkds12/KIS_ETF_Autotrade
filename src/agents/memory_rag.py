@@ -5,6 +5,7 @@ from qdrant_client.http.models import Distance, VectorParams
 # from sqlalchemy.orm import Session # For DB interaction if needed
 # from some_embedding_model import get_embedding # Placeholder
 import uuid
+import openai
 from sentence_transformers import SentenceTransformer # 실제 임베딩 모델 라이브러리
 from tenacity import retry, stop_after_attempt, wait_fixed # Qdrant 연결 재시도
 from sqlalchemy.orm import Session
@@ -71,18 +72,12 @@ class MemoryRAG:
         self.embedding_model_name = settings.EMBEDDING_MODEL_NAME
         self.db_session_factory = db_session_factory # 세션 팩토리 저장
 
-        # 임베딩 모델 로드
-        try:
-            logger.info(f"Loading embedding model: {self.embedding_model_name}")
-            self.embedding_model = SentenceTransformer(self.embedding_model_name)
-            actual_dim = self.embedding_model.get_sentence_embedding_dimension()
-            if actual_dim != self.vector_dim:
-                logger.warning(f"Configured VECTOR_DIM ({self.vector_dim}) differs from model dimension ({actual_dim}). Using {actual_dim}.")
-                self.vector_dim = actual_dim
-            logger.info(f"Embedding model loaded. Vector dimension: {self.vector_dim}")
-        except Exception as e:
-            logger.error(f"Failed to load embedding model '{self.embedding_model_name}': {e}", exc_info=True)
-            raise RuntimeError(f"Could not load embedding model: {e}") from e
+        # OpenAI Embedding API 초기화
+        if not settings.OPENAI_API_KEY:
+            raise RuntimeError("OPENAI_API_KEY must be set to use OpenAI embeddings")
+        openai.api_key = settings.OPENAI_API_KEY
+        self.embedding_model = openai
+        logger.info(f"Using OpenAI embedding model: {self.embedding_model_name} (vector_dim={self.vector_dim})")
 
         # Qdrant 클라이언트 초기화
         self.qdrant_client = self._init_qdrant_client()
@@ -125,8 +120,11 @@ class MemoryRAG:
     def get_embedding(self, text: str) -> list[float]:
         """주어진 텍스트에 대한 임베딩 벡터를 생성합니다."""
         try:
-            embedding = self.embedding_model.encode(text, convert_to_numpy=True)
-            return embedding.tolist()
+            resp = self.embedding_model.Embedding.create(
+                model=self.embedding_model_name,
+                input=text
+            )
+            return resp["data"][0]["embedding"]
         except Exception as e:
             logger.error(f"Failed to generate embedding for text: '{text[:50]}...': {e}", exc_info=True)
             raise ValueError(f"Embedding failed: {e}") from e

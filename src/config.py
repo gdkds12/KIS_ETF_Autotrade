@@ -1,6 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 from dotenv import load_dotenv
+from typing import Optional
 
 # .env 파일 로드 (프로젝트 루트에 있다고 가정)
 load_dotenv()
@@ -39,22 +40,23 @@ class Settings(BaseSettings):
     # Qdrant Configuration
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
-    QDRANT_URL: str | None = None # Construct if not provided
-    QDRANT_API_KEY: str | None = None # Optional
+    QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: Optional[str] = None
+    QDRANT_COLLECTION_NAME: str = "kis_etf_memory"
 
     # --- LLM Configuration --- 
     OPENAI_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
-    LLM_MAIN_TIER_MODEL: str = "gemini-2.5-pro-preview-03-25"       # <<< 변경: 주요 추론용 (Orchestrator)
+    LLM_MAIN_TIER_MODEL: str = "gemini-1.5-pro-latest"       # <<< 변경: 주요 추론용 (Orchestrator)
     LLM_LIGHTWEIGHT_TIER_MODEL: str = "gemini-2.5-flash-preview-04-17" # <<< 변경: 가벼운 작업용 (요약, 크롤링 등)
     # LLM_HIGHEST_TIER_MODEL: str = "gpt-4o" # 예비 또는 더 높은 성능 필요시 (OpenAI)
     # LLM_ALTERNATIVE_MODEL: str = "gpt-3.5-turbo" # 다른 옵션 (OpenAI)
     
     # Embedding Model (Example)
     EMBEDDING_MODEL_NAME: str = "text-embedding-3-large" # <<< 변경: OpenAI 최신 대형 모델
-    VECTOR_DIM: int = 3072 # <<< 변경: text-embedding-3-large 기본 차원
+    VECTOR_DIM: int = 12288 # text-embedding-3-large의 기본 임베딩 크기는 3072이나, 실제 반환 크기가 다를 수 있음 (OpenAI 문서 참조)
 
     # Trading Configuration
     INVESTMENT_AMOUNT: float = 1_000_000 # 총 투자 참고 금액 (LLM Context 용)
