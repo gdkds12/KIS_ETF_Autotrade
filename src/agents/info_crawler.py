@@ -155,8 +155,14 @@ class InfoCrawler:
         """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
         logger.info(f"Getting market summary for query: {user_query!r}")
         
-        # Fetch general news using the new search_news method
-        news_list = self.search_news(category='general')
+        # Fetch news tailored to the user query if provided
+        if user_query:
+            logger.info(f"Searching news relevant to query: {user_query}")
+            # Assuming search_news can handle query text (otherwise adapt)
+            news_list = self.search_news(query=user_query, category='general')
+        else:
+            logger.info("Searching general news as no specific query provided.")
+            news_list = self.search_news(category='general')
         
         if not news_list:
             logger.warning("No news fetched from Finnhub for market summary.")
