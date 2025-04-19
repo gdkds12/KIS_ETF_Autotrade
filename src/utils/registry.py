@@ -95,19 +95,7 @@ def search_symbols(query: str) -> list:
         return []
     return ORCHESTRATOR.info_crawler.search_symbols(query)
 
-@command(
-    name="search_web",
-    description="Search the web for financial information, news, or stock symbols using Finnhub. Use this for specific queries about companies, stocks, or market news.",
-    parameters=[
-        {
-            "name": "query",
-            "description": "The search query string.",
-            "type": "string",
-            "required": True,
-        }
-    ],
-    enabled=True,
-)
+@command
 def search_web(query: str) -> str:
     """Searches Finnhub for the given query.
 
@@ -117,21 +105,13 @@ def search_web(query: str) -> str:
     Returns:
         Search results from Finnhub.
     """
+    # Ensure Orchestrator and finnhub client are available
+    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'finnhub'):
+        return "(Orchestrator or Finnhub client not ready)"
+    # Execute Finnhub search via Orchestrator
     return ORCHESTRATOR.finnhub.search(query=query)
 
-@command(
-    name="get_quote",
-    description="Get the current quote for a stock symbol.",
-    parameters=[
-        {
-            "name": "symbol",
-            "description": "The stock symbol to get the quote for.",
-            "type": "string",
-            "required": True,
-        }
-    ],
-    enabled=True,
-)
+@command
 def get_quote(symbol: str) -> str:
     """Gets the current quote for the given stock symbol.
 
@@ -141,6 +121,10 @@ def get_quote(symbol: str) -> str:
     Returns:
         The current quote information.
     """
+    # Ensure Orchestrator and KIS interface are available
+    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'kis'):
+        return "(Orchestrator or KIS interface not ready)"
+    # Execute get_quote via Orchestrator's KIS interface
     return ORCHESTRATOR.kis.get_quote(symbol=symbol)
 
 @command
