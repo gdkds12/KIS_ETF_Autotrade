@@ -115,8 +115,13 @@ class MemoryRAG:
                 )
                 logger.info(f"Collection '{self.collection_name}' created with dimension {self.vector_dim}.")
             except Exception as create_e:
-                 logger.error(f"Failed to create Qdrant collection '{self.collection_name}': {create_e}", exc_info=True)
-                 raise RuntimeError(f"Failed to create Qdrant collection: {create_e}") from create_e
+                # 이미 존재해서 409 Conflict 가 떴다면 그냥 무시
+                msg = str(create_e)
+                if 'already exists' in msg or 'Conflict' in msg:
+                    logger.warning(f"Collection '{self.collection_name}' already exists, skipping creation.")
+                else:
+                    logger.error(f"Failed to create Qdrant collection: {create_e}", exc_info=True)
+                    raise RuntimeError(f"Failed to create Qdrant collection: {create_e}") from create_e
 
     def get_embedding(self, text: str) -> list[float]:
         """주어진 텍스트에 대한 임베딩 벡터를 생성합니다."""
