@@ -493,6 +493,36 @@ async def trade_command(interaction: Interaction):
              except Exception as followup_e:
                   logger.error(f"Failed to send followup error message: {followup_e}")
 
+@bot.tree.command(name="run_cycle", description="수동으로 일일 자동매매 사이클을 시작합니다.")
+async def run_cycle_command(interaction: Interaction):
+    """Handles the /run_cycle command to manually trigger the orchestrator."""
+    user = interaction.user
+    logger.info(f"Received /run_cycle command from {user.id} ({user.name})...")
+
+    fastapi_trigger_endpoint = "http://localhost:8000/trigger_cycle" # TODO: Make configurable?
+
+    await interaction.response.defer(ephemeral=True) # Acknowledge command, might take time
+
+    try:
+        logger.info(f"Attempting to trigger orchestrator cycle via endpoint: {fastapi_trigger_endpoint}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(fastapi_trigger_endpoint) as response:
+                response_status = response.status
+                response_json = await response.json()
+                logger.info(f"FastAPI trigger response: Status={response_status}, Body={response_json}")
+
+                if response.ok and response_json.get("status") == "triggered":
+                    await interaction.followup.send(f"✅ Orchestrator 사이클 실행을 백그라운드에서 시작했습니다.", ephemeral=True)
+                else:
+                     await interaction.followup.send(f"❌ Orchestrator 사이클 트리거 실패 (Status: {response_status}): {response_json.get('detail', 'Unknown error')}", ephemeral=True)
+
+    except aiohttp.ClientConnectorError as e:
+        logger.error(f"Cannot connect to FastAPI backend at {fastapi_trigger_endpoint} to trigger cycle: {e}")
+        await interaction.followup.send(f"❌ 백엔드({fastapi_trigger_endpoint}) 연결 실패. 사이클을 시작할 수 없습니다.", ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error triggering orchestrator cycle: {e}", exc_info=True)
+        await interaction.followup.send(f"❌ 사이클 트리거 중 예외 발생: {e}", ephemeral=True)
+
 # --- Orchestrator Communication --- 
 # This function is intended to be called by the Orchestrator.
 # In a real-world scenario, this might be part of a class or use a 

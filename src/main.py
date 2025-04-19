@@ -91,23 +91,10 @@ async def lifespan(app: FastAPI):
         app_state['orchestrator'] = orchestrator
         logger.info("Orchestrator initialized.")
 
-        # --- Start Background Task (Conceptual - Orchestrator might manage its own loop) ---
-        # If Orchestrator needs an external trigger or periodic run managed by FastAPI:
-        # async def periodic_orchestrator_run():
-        #     while True:
-        #         logger.info("Triggering Orchestrator daily cycle...")
-        #         try:
-        #             # Run synchronous orchestrator method in a thread to avoid blocking asyncio loop
-        #             await asyncio.to_thread(app_state['orchestrator'].run_daily_cycle) 
-        #         except Exception as cycle_e:
-        #             logger.error(f"Error in periodic orchestrator run: {cycle_e}", exc_info=True)
-        #         await asyncio.sleep(settings.CYCLE_INTERVAL_MINUTES * 60)
-        # 
-        # task = asyncio.create_task(periodic_orchestrator_run())
-        # background_tasks.add(task)
-        # task.add_done_callback(background_tasks.discard)
-        # logger.info("Orchestrator periodic task scheduled.")
-        # For now, assume Orchestrator is triggered elsewhere or manages its loop
+        # --- Start Background Task REMOVED --- 
+        # The periodic run is no longer scheduled automatically on startup.
+        # It will be triggered manually via API call (e.g., from Discord bot).
+        # logger.info("Automatic periodic orchestrator task is disabled.")
 
         yield # Application is running
 
@@ -227,19 +214,33 @@ async def confirm_order_endpoint(payload: OrderConfirmationPayload, background_t
         logger.error(f"Failed to schedule background task for order execution (Request ID: {request_id}): {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to start order execution for request {request_id}")
 
-# --- Placeholder for trigger endpoint if needed ---
-# @app.post("/trigger/cycle")
-# async def trigger_cycle_now(orchestrator: Orchestrator = Depends(get_orchestrator)):
-#     logger.info("Manual trigger received for daily cycle.")
-#     # Consider running in background task
-#     asyncio.create_task(asyncio.to_thread(orchestrator.run_daily_cycle))
-#     return {"message": "Daily cycle triggered in background."}
+# --- Manual Trigger Endpoint --- 
+@app.post("/trigger_cycle")
+async def trigger_cycle_endpoint(background_tasks: BackgroundTasks, orchestrator: Orchestrator = Depends(get_orchestrator)):
+    """Manually triggers the Orchestrator's daily cycle in the background."""
+    logger.info("Received manual trigger request for the daily cycle.")
+    try:
+        # Define the background task
+        async def run_cycle_task():
+            logger.info("Background task started for running the daily cycle...")
+            try:
+                # Assuming run_daily_cycle handles its own errors internally
+                # Run synchronous method in threadpool if it blocks
+                await asyncio.to_thread(orchestrator.run_daily_cycle)
+                logger.info("Background daily cycle task finished.")
+            except Exception as cycle_err:
+                 logger.error(f"Error during background daily cycle execution: {cycle_err}", exc_info=True)
+                 # TODO: Notify admin/user about the cycle failure?
+
+        background_tasks.add_task(run_cycle_task)
+        logger.info("Background task scheduled for running the daily cycle.")
+        return {"status": "triggered", "message": "Orchestrator cycle triggered to run in background."}
+
+    except Exception as e:
+        logger.error(f"Failed to schedule background task for daily cycle trigger: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to trigger orchestrator cycle")
 
 # --- Main Execution (for running directly) ---
 if __name__ == "__main__":
     # Note: Running Uvicorn directly might not be ideal for managing dependencies
     #       and lifespans correctly compared to using `uvicorn src.main:app`
-    #       This is just for basic testing.
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    logger.info("Starting FastAPI server directly (for testing...)")
-    uvicorn.run(app, host="0.0.0.0", port=8000) 
