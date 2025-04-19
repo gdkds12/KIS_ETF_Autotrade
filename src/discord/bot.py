@@ -732,6 +732,77 @@ async def debug_balance(interaction: Interaction):
             f"명령어 실행 중 오류 발생: ```{type(e).__name__}: {e}```",
             ephemeral=True
         )
+
+# --- NEW DEBUG COMMAND --- 
+@bot.tree.command(name="debug_market_summary", description="(디버그) 시장 동향 요약 및 디버그 정보 반환")
+@app_commands.describe(query="요약할 시장 동향의 쿼리 (예: '한국 ETF 시장 트렌드')")
+async def debug_market_summary(interaction: Interaction, query: str):
+    """사용자 쿼리를 기반으로 Finnhub+LLM 요약을 호출하고 결과를 JSON&debug로 반환합니다."""
+    logger.info(f"Received /debug_market_summary command from {interaction.user.id} with query: '{query}'")
+    from src.utils.registry import COMMANDS, ORCHESTRATOR
+    
+    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'info_crawler'):
+        await interaction.response.send_message(
+            "오류: Orchestrator 또는 InfoCrawler가 아직 준비되지 않았습니다.", 
+            ephemeral=True
+        )
+        return
+        
+    await interaction.response.defer(ephemeral=True) # Acknowledge interaction, might take time
+    try:
+        # 1) 시장 요약 호출 (Using the command wrapper which calls orchestrator.info_crawler.get_market_summary)
+        # Make sure to run synchronous code in an executor if it blocks
+        loop = asyncio.get_running_loop()
+        raw_result = await loop.run_in_executor(None, lambda: COMMANDS['get_market_summary'](query))
+        
+        # 2) 디버그 정보 생성
+        debug_info = (
+            f"Orchestrator set: {ORCHESTRATOR is not None}\n"
+            f"User query: {query}\n"
+            f"Raw result length: {len(str(raw_result))}"
+        )
+        
+        # Format result (assuming it's a string, try JSON otherwise)
+        try:
+            # If the result is JSON parseable string, format it nicely
+            parsed_json = json.loads(raw_result)
+            formatted_result = json.dumps(parsed_json, ensure_ascii=False, indent=2)
+        except (json.JSONDecodeError, TypeError):
+            # Otherwise, treat as plain text
+            formatted_result = str(raw_result)
+            
+        # Construct the final message
+        final_message = (
+            f"```json\n{formatted_result}\n```\n" # Use json for structure, even if it's just a string inside
+            f"```DEBUG\n{debug_info}\n```"
+        )
+        
+        # Check length before sending
+        if len(final_message) > 2000:
+            truncated_result = formatted_result[:(1950 - len(debug_info))] + "... (truncated)"
+            final_message = (
+                 f"```json\n{truncated_result}\n```\n"
+                 f"```DEBUG\n{debug_info}\n```"
+             )
+             
+        await interaction.followup.send(final_message, ephemeral=True)
+        
+    except KeyError:
+        logger.error("Command 'get_market_summary' not found in registry.")
+        await interaction.followup.send(
+            "오류: 'get_market_summary' 명령어를 레지스트리에서 찾을 수 없습니다.", 
+            ephemeral=True
+        )
+    except Exception as e:
+        logger.error(f"Error executing debug_market_summary command: {e}", exc_info=True)
+        tb = traceback.format_exc()
+        error_message = (
+             f"명령 실행 중 오류 발생: ```{type(e).__name__}: {e}```\n"
+             f"```Traceback:\n{tb[:1500]}...```"
+        )
+        if len(error_message) > 2000:
+            error_message = error_message[:1997] + "..."
+        await interaction.followup.send(error_message, ephemeral=True)
 # -------------------------
 
 # --- Orchestrator Communication --- 
