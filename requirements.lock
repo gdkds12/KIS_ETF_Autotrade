@@ -14,7 +14,6 @@ tenacity>=8.2.0,<8.3.0
 pandas>=2.2.0,<2.3.0
 numpy>=1.26.0,<1.27.0
 discord.py>=2.3.0,<2.4.0
-apache-airflow>=2.8.0,<2.9.0 # Note: Airflow has many extras, install as needed
 SQLAlchemy>=2.0.0,<2.1.0
 psycopg2-binary>=2.9.0,<2.10.0 # For PostgreSQL connection
 alembic>=1.13.0,<1.14.0 # For DB migrations
