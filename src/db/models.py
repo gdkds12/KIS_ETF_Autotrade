@@ -1,10 +1,15 @@
 # SQLAlchemy ORM 모델 
 import datetime
+import logging
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, Text, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from sqlalchemy.sql import func # for server_default=func.now()
-
+from sqlalchemy.dialects.postgresql import UUID # If using UUID
+import uuid
 from src.config import settings # DB URL 가져오기
+
+# 로깅 객체 정의
+logger = logging.getLogger(__name__)
 
 Base = declarative_base()
 
@@ -121,9 +126,12 @@ class SessionLog(Base):
         return f"<SessionLog(session_id={self.session_id}, actor='{self.actor}', message='{self.message[:30]}...')>"
 
 # --- DB 연결 및 테이블 생성 (애플리케이션 시작 시 또는 Alembic 사용) --- 
-engine = create_engine(settings.DATABASE_URL, echo=False) # echo=True for SQL logging
+DATABASE_URL = settings.DATABASE_URL
 
-# Session maker for application use
+# Create engine
+engine = create_engine(DATABASE_URL) # Add pool options etc. for production
+
+# Create session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 def create_tables():
@@ -134,7 +142,8 @@ def create_tables():
         logger.info("Tables checked/created successfully.")
     except Exception as e:
         logger.error(f"Error creating database tables: {e}", exc_info=True)
-        raise
+        # Depending on the application, you might want to raise the exception
+        # raise e
 
 if __name__ == "__main__":
     # This will attempt to create tables if the script is run directly
