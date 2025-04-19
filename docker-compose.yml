@@ -1,5 +1,5 @@
 services:
-  # --- Existing Tailscale Service ---
+  # --- tailscale (exit-node) ---
   tailscale:
     container_name: tailscale
     image: tailscale/tailscale
@@ -12,19 +12,14 @@ services:
       - tailscale-var-lib:/var/lib
       - /dev/net/tun:/dev/net/tun
     environment:
-      # NOTE: TS_AUTHKEY still needs to be available where docker-compose runs,
-      # or set directly here or via system environment variables.
-      # It won't be read from the project's .env file by default for this service.
       - TS_AUTHKEY=${TS_AUTHKEY}
       - TS_EXTRA_ARGS=--advertise-exit-node --hostname=${TS_HOSTNAME:-kr-exit-node}
 
-  # --- Autotrade Infrastructure ---
+  # --- PostgreSQL ---
   postgres_db:
     container_name: postgres_db
     image: postgres:15
     restart: unless-stopped
-    # These env vars can still be sourced from the .env file in the project directory
-    # because docker-compose reads the .env file in the context of the compose file first.
     environment:
       POSTGRES_USER: ${DB_USER:-user}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
@@ -41,9 +36,12 @@ services:
       timeout: 5s
       retries: 5
 
+  # --- Qdrant (커스텀 이미지) ---
   qdrant_db:
     container_name: qdrant_db
-    image: qdrant/qdrant:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.qdrant
     restart: unless-stopped
     environment:
       QDRANT_API_KEY: ${QDRANT_API_KEY:-}
@@ -53,7 +51,14 @@ services:
       - qdrant_storage:/qdrant/storage
     networks:
       - autotrade_net
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6333/collections"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
 
+  # --- Grafana ---
   grafana_dashboard:
     container_name: grafana_dashboard
     image: grafana/grafana-oss:latest
@@ -65,10 +70,12 @@ services:
     depends_on:
       postgres_db:
         condition: service_healthy
+      qdrant_db:
+        condition: service_healthy
     networks:
       - autotrade_net
 
-  # --- Autotrade Application Services ---
+  # --- Autotrade API ---
   autotrade_app:
     container_name: autotrade_app
     build:
@@ -76,13 +83,17 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
-      # Modified path to look inside the project directory
       - ./KIS_ETF_Autotrade/.env
-    command: uvicorn src.main:app --host 0.0.0.0 --port 8000
+    # PATH 에 uvicorn 스크립트가 없으므로 python -m 으로 실행
+    command: ["python", "-m", "uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"
     volumes:
       - app_logs:/app/logs
+    environment:
+      - QDRANT_HOST=qdrant_db
+      - QDRANT_PORT=6333
+      - QDRANT_URL=http://qdrant_db:6333
     depends_on:
       postgres_db:
         condition: service_healthy
@@ -91,6 +102,7 @@ services:
     networks:
       - autotrade_net
 
+  # --- Discord Bot ---
   discord_bot:
     container_name: discord_bot
     build:
@@ -98,9 +110,9 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     env_file:
-      # Modified path to look inside the project directory
       - ./KIS_ETF_Autotrade/.env
-    command: python src/discord/bot.py
+    working_dir: /app
+    command: ["python", "-m", "src.discord.bot"]
     volumes:
       - app_logs:/app/logs
     depends_on:
@@ -118,4 +130,5 @@ volumes:
 
 networks:
   autotrade_net:
-    driver: bridge
+    external:
+      name: ubuntu_autotrade_net

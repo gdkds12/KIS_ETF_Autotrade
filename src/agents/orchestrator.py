@@ -24,6 +24,9 @@ from qdrant_client import QdrantClient
 from src.discord.bot import DiscordRequestType, send_discord_request # Hypothetical import
 import asyncio # For potential async operations
 
+# NEW: function registry
+from src.utils.registry import command, COMMANDS
+
 logger = logging.getLogger(__name__)
 
 # --- Helper for Retrying Broker Operations ---
@@ -102,6 +105,25 @@ class Orchestrator:
         self.briefing_agent = BriefingAgent() # LLM could be passed here too
 
         logger.info("Orchestrator initialized all agents.")
+
+    # ------------------------------------------------------------------
+    # LLM‑CALLABLE HELPER FUNCTIONS
+    # ------------------------------------------------------------------
+
+    @command
+    def get_balance(self) -> dict:
+        """현재 계좌의 예수금·총자산을 조회합니다."""
+        return self.broker.get_balance()
+
+    @command
+    def get_positions(self) -> list[dict]:
+        """현재 보유 포지션 목록을 조회합니다."""
+        return self.broker.get_positions()
+
+    @command
+    def get_market_summary(self) -> str:
+        """InfoCrawler 로부터 오늘의 시장 요약을 가져옵니다."""
+        return self.info_crawler.get_market_summary()
 
     def run_daily_cycle(self):
         """일일 자동매매 사이클 실행 (LLM 중심)
