@@ -13,72 +13,79 @@ from src.config import settings
 logger = logging.getLogger(__name__)
 
 class FinnhubClientError(Exception):
-    """Finnhub API 관련 오류를 위한 사용자 정의 예외 클래스"""
+    """Custom exception for FinnhubClient errors."""
     pass
 
 class FinnhubClient:
-    """Finnhub API와 상호작용하기 위한 클라이언트 클래스"""
-    def __init__(self):
-        """Finnhub 클라이언트를 초기화합니다."""
-        self.api_key = os.getenv("FINNHUB_API_KEY")
-        if not self.api_key:
-            logger.error("FINNHUB_API_KEY 환경 변수가 설정되지 않았습니다.")
-            self.client = None
-        else:
-            try:
-                self.client = finnhub.Client(api_key=self.api_key)
-                logger.info("Finnhub 클라이언트가 성공적으로 초기화되었습니다.")
-            except Exception as e:
-                logger.error(f"Finnhub 클라이언트 초기화 중 오류 발생: {e}", exc_info=True)
-                self.client = None
-        logger.info(f"FinnhubClient initialized status: API key set={bool(self.api_key)}, Client active={bool(self.client)}")
-
-    def get_stock_quote(self, symbol: str) -> dict:
-        """Gets the quote for a given stock symbol using Finnhub."""
-        if not self.client:
-            logger.error("Finnhub client not initialized. Cannot fetch quote.")
-            return {}
-            
-        logger.info(f"Fetching quote for {symbol}")
-        try:
-            quote = self.client.quote(symbol)
-            logger.debug(f"Quote for {symbol}: {quote}")
-            return quote
-        except finnhub.FinnhubAPIException as e:
-            logger.error(f"Finnhub API error fetching quote for {symbol}: {e}")
-            raise FinnhubClientError(f"Finnhub API 오류: {e}")
-        except Exception as e:
-            logger.error(f"Error fetching quote for {symbol}: {e}", exc_info=True)
-            raise FinnhubClientError(f"Finnhub 시세 조회 중 예상치 못한 오류: {e}")
-
-    def search(self, query: str) -> Dict[str, Any]:
-        """주어진 쿼리에 대해 Finnhub 심볼 검색을 수행합니다.
-
-        Args:
-            query (str): 검색할 쿼리 (예: 'Apple')
-
-        Returns:
-            Dict[str, Any]: 검색 결과. 'result' 키 아래에 일치하는 심볼 목록 포함.
-                            오류 발생 시 빈 딕셔너리 반환.
-
-        Raises:
-            FinnhubClientError: API 호출 중 오류 발생 시
-        """
-        if not self.client:
-            logger.error("Finnhub client not initialized. Cannot perform search.")
-            return {}
+    def __init__(self, token: str):
+        """Initializes the Finnhub client using the provided API token."""
+        if not token:
+            logger.error("Finnhub API token is missing.")
+            # Raise an error or handle gracefully depending on requirements
+            raise ValueError("Finnhub API token is required.")
             
         try:
-            # logger.debug(f"Finnhub에서 '{query}' 검색 중...")
-            res = self.client.symbol_lookup(query)
-            # logger.debug(f"Finnhub 검색 결과 수신: {len(res.get('result', []))}개 항목")
-            return res
-        except finnhub.FinnhubAPIException as e:
-            logger.error(f"Finnhub API 오류 발생 (검색: '{query}'): {e}")
-            raise FinnhubClientError(f"Finnhub API 오류: {e}")
+            # Configure the API client using the token
+            configuration = finnhub.Configuration(
+                api_key={'token': token}
+            )
+            # Create the ApiClient context and store the DefaultApi instance
+            self.api_client = finnhub.ApiClient(configuration)
+            self.default_api = finnhub.DefaultApi(self.api_client)
+            logger.info("Finnhub client initialized successfully.")
         except Exception as e:
-            logger.error(f"Finnhub 검색 중 예상치 못한 오류 발생 ('{query}'): {e}", exc_info=True)
-            raise FinnhubClientError(f"Finnhub 검색 중 예상치 못한 오류: {e}")
+             logger.error(f"Failed to initialize Finnhub client: {e}", exc_info=True)
+             # Clean up potentially partially initialized client
+             if hasattr(self, 'api_client'):
+                 try:
+                     self.api_client.close()
+                 except Exception:
+                     pass # Ignore errors during cleanup
+             raise FinnhubClientError(f"Finnhub client initialization failed: {e}")
+
+    def get_quote(self, symbol: str):
+        """Fetches the real-time quote for a given stock symbol."""
+        logger.debug(f"Fetching quote for symbol: {symbol}")
+        try:
+            # Use the DefaultApi instance to make the API call
+            quote_data = self.default_api.quote(symbol)
+            logger.debug(f"Received quote for {symbol}: {quote_data}")
+            return quote_data
+        except finnhub.ApiException as e:
+            logger.error(f"Finnhub API error fetching quote for {symbol}: {e.status} - {e.reason} - {e.body}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error fetching quote: {e.reason}")
+        except Exception as e:
+            logger.error(f"Unexpected error fetching quote for {symbol}: {e}", exc_info=True)
+            raise FinnhubClientError(f"Unexpected error fetching quote: {e}")
+
+    def get_candles(self, symbol: str, resolution: str, _from: int, to: int):
+        """Fetches candle (chart) data for a given stock symbol."""
+        logger.debug(f"Fetching candles for {symbol} (Resolution: {resolution}, From: {_from}, To: {to})")
+        try:
+             # Use the DefaultApi instance to make the API call
+            candle_data = self.default_api.stock_candles(symbol, resolution, _from, to)
+            logger.debug(f"Received {len(candle_data.get('c', [])) if candle_data else 0} candles for {symbol}")
+            return candle_data
+        except finnhub.ApiException as e:
+            logger.error(f"Finnhub API error fetching candles for {symbol}: {e.status} - {e.reason} - {e.body}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error fetching candles: {e.reason}")
+        except Exception as e:
+             logger.error(f"Unexpected error fetching candles for {symbol}: {e}", exc_info=True)
+             raise FinnhubClientError(f"Unexpected error fetching candles: {e}")
+
+    def search(self, query: str) -> dict:
+        """Performs a symbol lookup using the query."""
+        logger.debug(f"Searching symbols with query: '{query}'")
+        try:
+            search_result = self.default_api.symbol_lookup(query)
+            logger.debug(f"Symbol search returned {search_result.get('count', 0)} results for '{query}'")
+            return search_result.to_dict() # Convert result to dict if necessary
+        except finnhub.ApiException as e:
+            logger.error(f"Finnhub API error searching symbols for '{query}': {e.status} - {e.reason} - {e.body}", exc_info=True)
+            raise FinnhubClientError(f"Finnhub API error searching symbols: {e.reason}")
+        except Exception as e:
+            logger.error(f"Unexpected error searching symbols for '{query}': {e}", exc_info=True)
+            raise FinnhubClientError(f"Unexpected error searching symbols: {e}")
 
     def get_company_news(self, symbol: str, start_date: str, end_date: str) -> List[Dict[str, Any]]:
         """특정 회사의 뉴스를 가져옵니다.
@@ -95,16 +102,16 @@ class FinnhubClient:
         Raises:
             FinnhubClientError: API 호출 중 오류 발생 시
         """
-        if not self.client:
+        if not self.api_client:
             logger.error("Finnhub client not initialized. Cannot fetch company news.")
             return []
             
         try:
             # logger.debug(f"{symbol}에 대한 회사 뉴스 검색 ({start_date} ~ {end_date})...")
-            news = self.client.company_news(symbol, _from=start_date, to=end_date)
+            news = self.default_api.company_news(symbol, _from=start_date, to=end_date)
             # logger.debug(f"{symbol} 뉴스 결과 수신: {len(news)}개 항목")
             return news
-        except finnhub.FinnhubAPIException as e:
+        except finnhub.ApiException as e:
             logger.error(f"Finnhub API 오류 발생 (회사 뉴스: {symbol}): {e}")
             raise FinnhubClientError(f"Finnhub API 오류: {e}")
         except Exception as e:
@@ -125,88 +132,70 @@ class FinnhubClient:
         Raises:
             FinnhubClientError: API 호출 중 오류 발생 시
         """
-        if not self.client:
+        if not self.api_client:
             logger.error("Finnhub client not initialized. Cannot fetch general news.")
             return []
             
         try:
             # logger.debug(f"'{category}' 카테고리의 일반 뉴스 검색 중 (min_id: {min_id})...")
-            news = self.client.general_news(category, min_id=min_id)
+            news = self.default_api.general_news(category, min_id=min_id)
             # logger.debug(f"일반 뉴스 결과 수신: {len(news)}개 항목")
             return news
-        except finnhub.FinnhubAPIException as e:
+        except finnhub.ApiException as e:
             logger.error(f"Finnhub API 오류 발생 (일반 뉴스: {category}): {e}")
             raise FinnhubClientError(f"Finnhub API 오류: {e}")
         except Exception as e:
             logger.error(f"'{category}' 카테고리 일반 뉴스 검색 중 예상치 못한 오류 발생: {e}", exc_info=True)
             raise FinnhubClientError(f"'{category}' 일반 뉴스 검색 중 예상치 못한 오류: {e}")
 
-# 사용 예시 (테스트 목적)
+    def close(self):
+        """Closes the API client connection and releases resources."""
+        if hasattr(self, 'api_client') and self.api_client:
+            try:
+                self.api_client.close()
+                logger.info("Finnhub API client closed.")
+            except Exception as e:
+                logger.error(f"Error closing Finnhub API client: {e}", exc_info=True)
+
+# Example usage (optional, for testing)
 if __name__ == '__main__':
-    # Setup basic logging for testing
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    # Load environment variables (ensure .env file is present or variables are set)
+    # Load environment variables (requires python-dotenv)
     from dotenv import load_dotenv
     load_dotenv()
-    
-    try:
-        # Initialize client (reads API key from environment)
-        client = FinnhubClient()
+    api_key = os.getenv("FINNHUB_API_KEY")
 
-        if client.client: # Check if client initialized successfully
-            # 심볼 검색 테스트
-            search_results = client.search('Apple')
-            print("\n--- 심볼 검색 결과 ('Apple') ---")
-            if search_results and 'result' in search_results:
-                print(f"총 {search_results.get('count', 0)}개 결과 중 일부:")
-                for item in search_results['result'][:5]: # 처음 5개 결과만 출력
-                    print(f"  - {item['symbol']}: {item['description']}")
-            else:
-                print("검색 결과 없음 또는 오류")
+    if not api_key:
+        print("Error: FINNHUB_API_KEY environment variable not set.")
+    else:
+        client = None
+        try:
+            client = FinnhubClient(token=api_key)
+            
+            print("\n--- Testing Get Quote ---")
+            quote = client.get_quote("AAPL")
+            print(f"AAPL Quote: {quote}")
 
-            # 시세 조회 테스트
-            quote = client.get_stock_quote('AAPL')
-            print("\n--- 시세 조회 결과 ('AAPL') ---")
-            if quote:
-                 print(f"  현재가: {quote.get('c')}, 고가: {quote.get('h')}, 저가: {quote.get('l')}")
-            else:
-                 print("시세 조회 실패")
+            print("\n--- Testing Search ---")
+            search_res = client.search("Microsoft")
+            print(f"Search results for 'Microsoft': {search_res.get('result', [])[:3]}") # Show top 3
 
-            # 회사 뉴스 테스트 (예: AAPL)
-            from datetime import date, timedelta
-            today = date.today()
-            start_date_str = (today - timedelta(days=7)).strftime('%Y-%m-%d')
-            end_date_str = today.strftime('%Y-%m-%d')
-            company_news = client.get_company_news('AAPL', start_date_str, end_date_str)
-            print(f"\n--- 회사 뉴스 결과 ('AAPL', {start_date_str} ~ {end_date_str}) ---")
-            if company_news:
-                print(f"총 {len(company_news)}개 뉴스 중 최근 3개:")
-                for news_item in company_news[:3]: # 최근 3개 뉴스만 출력
-                    # Convert timestamp to readable format if needed
-                    dt_obj = datetime.fromtimestamp(news_item.get('datetime', 0))
-                    print(f"  - [{dt_obj.strftime('%Y-%m-%d %H:%M')}] {news_item['headline']}")
-                    print(f"    URL: {news_item['url']}")
-            else:
-                print("회사 뉴스 없음 또는 오류")
+            # Add candle test if needed
+            # print("\n--- Testing Get Candles ---")
+            # from datetime import datetime, timedelta
+            # to_ts = int(datetime.now().timestamp())
+            # from_ts = int((datetime.now() - timedelta(days=30)).timestamp())
+            # candles = client.get_candles("AAPL", "D", from_ts, to_ts)
+            # print(f"AAPL Daily Candles (last 30 days): Found {len(candles.get('c', []))} entries.")
 
-            # 일반 뉴스 테스트
-            general_news = client.get_general_news()
-            print("\n--- 일반 뉴스 결과 ('general') ---")
-            if general_news:
-                print(f"총 {len(general_news)}개 뉴스 중 최근 3개:")
-                for news_item in general_news[:3]: # 최근 3개 뉴스만 출력
-                    dt_obj = datetime.fromtimestamp(news_item.get('datetime', 0))
-                    print(f"  - [{dt_obj.strftime('%Y-%m-%d %H:%M')}] {news_item['headline']}")
-                    print(f"    URL: {news_item['url']}")
-            else:
-                print("일반 뉴스 없음 또는 오류")
-        else:
-            print("\nFinnhub 클라이언트 초기화 실패. API 키 환경 변수(FINNHUB_API_KEY)를 확인하세요.")
-
-    except FinnhubClientError as e:
-        print(f"Finnhub 클라이언트 오류: {e}")
-    except ValueError as e: # Catch potential init errors if raised
-        print(f"설정 오류: {e}")
-    except Exception as e:
-        print(f"예상치 못한 오류 발생: {e}") 
+        except FinnhubClientError as e:
+            print(f"Finnhub Client Error: {e}")
+        except ValueError as e:
+            print(f"Value Error: {e}")
+        except Exception as e:
+            print(f"An unexpected error occurred: {e}")
+        finally:
+            # Ensure client is closed if initialized
+            if client:
+                client.close() 

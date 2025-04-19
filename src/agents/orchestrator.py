@@ -69,7 +69,7 @@ class Orchestrator:
         self.llm_model_name = None # Store model name
 
         # Initialize Finnhub Client
-        self.finnhub = FinnhubClient(api_key=settings.FINNHUB_API_KEY)
+        self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
 
         # Initialize OpenAI API Key
         if settings.OPENAI_API_KEY:
