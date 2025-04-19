@@ -103,6 +103,13 @@ def search_web(query: str) -> list:
     return ORCHESTRATOR.info_crawler.search_web(query=query)
 
 @command
+def comprehensive_trend(query: str) -> str:
+    """여러 API 호출을 통해 최근 미국 시장 동향을 종합 조사해 요약합니다."""
+    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'info_crawler'):
+        return "(Orchestrator 또는 InfoCrawler 준비되지 않음)"
+    return ORCHESTRATOR.info_crawler.comprehensive_trend(query=query)
+
+@command
 def get_quote(symbol: str) -> str:
     """Gets the current quote for the given stock symbol.
 
