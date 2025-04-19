@@ -11,7 +11,7 @@ from tenacity import retry, stop_after_attempt, wait_fixed # Qdrant 연결 재�
 from sqlalchemy.orm import Session
 from sqlalchemy import select # select 함수 임포트
 import datetime
-import google.generativeai as genai # Gemini 라이브러리 임포트
+# import google.generativeai as genai # Gemini 라이브러리 임포트
 
 # 내부 config 모듈에서 설정 로드
 from src.config import settings
@@ -21,42 +21,47 @@ from src.db.models import TradingSession, SessionLog # DB 모델 임포트
 
 logger = logging.getLogger(__name__)
 
-# --- Gemini 모델 초기화 (MemoryRAG 클래스 외부 또는 내부에서 관리) --- 
-gemini_summary_model = None
-if settings.GOOGLE_API_KEY:
-    try:
-        # Configure the API key at the module level or within the class
-        if not genai.is_configured(): # Check if already configured
-             genai.configure(api_key=settings.GOOGLE_API_KEY)
-        gemini_summary_model = genai.GenerativeModel(settings.LLM_LIGHTWEIGHT_TIER_MODEL)
-        logger.info(f"Gemini model '{settings.LLM_LIGHTWEIGHT_TIER_MODEL}' initialized for session summarization.")
-    except Exception as e:
-         logger.error(f"Failed to initialize Gemini model for summarization: {e}")
+# --- OpenAI 모델 초기화 (MemoryRAG 용) ---
+# Rely on global setting of openai.api_key done elsewhere (e.g., orchestrator, bot setup)
+if settings.OPENAI_API_KEY:
+    # openai.api_key = settings.OPENAI_API_KEY # Avoid setting globally multiple times
+    logger.info(f"MemoryRAG will use OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
 else:
-    logger.warning("GOOGLE_API_KEY not set. Session summarization will use placeholder.")
+    logger.warning("OPENAI_API_KEY not set. Session summarization will use placeholder.")
 
-# --- LLM 요약 함수 --- 
+# --- LLM 요약 함수 (Now using OpenAI) --- 
 def summarize_text(text: str) -> str:
-    """Gemini Flash 모델을 사용하여 대화 내용을 요약합니다."""
-    if not gemini_summary_model:
-        logger.warning("Gemini model not available. Returning placeholder summary.")
+    """OpenAI ChatCompletion을 사용하여 대화 내용을 요약합니다."""
+    if not settings.OPENAI_API_KEY:
+        logger.warning("OPENAI_API_KEY not set. Returning placeholder summary.")
         return f"(요약 불가: 모델 없음) 대화 시작: {text[:50]}..."
+    if not text:
+        logger.warning("Empty text provided for summarization.")
+        return "(요약 불가: 빈 텍스트)"
         
-    prompt = f"다음 Discord 대화 내용을 간결하게 한국어로 요약해줘. 주요 질문과 답변, 논의된 핵심 주제를 포함해줘.\n\n--- 대화 내용 ---\n{text}\n\n--- 요약 --- "
-    
     try:
-        logger.info(f"Sending conversation (approx {len(text)} chars) to Gemini for summarization...")
-        # Safety settings 설정 (필요에 따라 조정)
-        safety_settings = {
-            # Harm categories can be adjusted as needed
-        }
-        response = gemini_summary_model.generate_content(prompt, safety_settings=safety_settings)
-        summary = response.text.strip()
-        logger.info("Successfully received summary from Gemini.")
+        logger.info(f"Requesting OpenAI summary using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
+        messages = [
+            {"role": "system", "content": "You are an expert assistant that concisely summarizes conversation logs in Korean."}, # System prompt
+            {"role": "user", "content": f"Please summarize the following conversation log concisely in Korean. Focus on key questions, decisions, and topics discussed:\n\n--- Conversation Log ---\n{text}\n\n--- Summary ---"}
+        ]
+        # Create a client instance for the request
+        client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+        resp = client.chat.completions.create(
+            model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
+            messages=messages,
+            temperature=0.5,
+            max_tokens=300 # Adjust token limit if needed
+        )
+        summary = resp.choices[0].message.content.strip()
+        logger.info("Successfully received summary from OpenAI.")
         return summary
+    except openai.APIError as e:
+        logger.error(f"OpenAI API Error during summarization: {e}", exc_info=True)
+        return f"(OpenAI API 오류: {e})"
     except Exception as e:
-        logger.error(f"Gemini summarization failed: {e}", exc_info=True)
-        return f"(요약 생성 중 오류 발생: {e})"
+        logger.error(f"OpenAI summarization failed: {e}", exc_info=True)
+        return f"(요약 불가: {e})"
 
 class MemoryRAG:
     def __init__(self, db_session_factory = None):
@@ -222,7 +227,7 @@ class MemoryRAG:
             conversation_text = "\n".join([f"{log.actor}: {log.message}" for log in logs])
             logger.info(f"Retrieved {len(logs)} logs for session {session_uuid} for summarization.")
 
-            # 3. LLM 요약 호출 (Gemini 사용)
+            # 3. LLM 요약 호출 (Now uses OpenAI)
             summary_text = summarize_text(conversation_text)
 
             # 4. Qdrant에 요약 저장
