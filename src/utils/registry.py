@@ -71,8 +71,9 @@ def get_positions() -> list:
 
 
 @command
-def get_market_summary() -> str:
-    """오늘의 InfoCrawler 요약."""
+def get_market_summary(query: str) -> str:
+    """‘query’에 맞춰 InfoCrawler+LLM으로 시장 동향을 요약합니다."""
     if ORCHESTRATOR is None:
         return "(orchestrator not ready)"
-    return ORCHESTRATOR.info_crawler.get_market_summary() 
+    # Pass the query to the InfoCrawler method
+    return ORCHESTRATOR.info_crawler.get_market_summary(query) 

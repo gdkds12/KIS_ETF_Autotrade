@@ -390,26 +390,8 @@ class TradingBot(commands.Bot):
                     if suggested_order:
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
                     
-                    # 실제 답변과 함께 debug_info도 출력
-                    debug_msg_formatted = f"\n\n```DEBUG\n{debug_info}\n```"
-                    # Check length before sending to avoid exceeding Discord limit
-                    final_message = response_text
-                    if len(response_text) + len(debug_msg_formatted) <= 2000:
-                        final_message += debug_msg_formatted
-                    else:
-                        # If too long, send debug info separately or truncate response
-                        logger.warning(f"Combined response and debug info too long for Discord. Sending separately or truncating. Lengths: Response={len(response_text)}, Debug={len(debug_msg_formatted)}")
-                        # Option 1: Send separately (might be rate limited)
-                        # await message.channel.send(response_text, view=view)
-                        # await message.channel.send(debug_msg_formatted)
-                        # Option 2: Truncate response text (simpler)
-                        available_space = 2000 - len(debug_msg_formatted) - 10 # a bit of buffer
-                        if available_space > 100: # Only truncate if reasonable space left
-                           final_message = response_text[:available_space] + "... (truncated)" + debug_msg_formatted
-                        else: # If debug info itself is too long, just send response
-                            final_message = response_text[:1990] + "... (truncated)" 
-                            
-                    await message.channel.send(final_message, view=view)
+                    # 자연어 질문에는 debug_info 없이 순수 답변만 전송
+                    await message.channel.send(response_text, view=view)
                     logger.info(f"[Session:{message.channel.id}] Sent response to user.")
 
                 except Exception as e:

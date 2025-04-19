@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     # --- LLM Configuration --- 
     OPENAI_API_KEY: str | None = None
     GOOGLE_API_KEY: str | None = None
+    FINNHUB_API_KEY: str | None = None # Finnhub API Key
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
     LLM_MAIN_TIER_MODEL: str = "gemini-1.5-pro-latest"       # <<< 변경: 주요 추론용 (Orchestrator)
@@ -105,6 +106,7 @@ if __name__ == "__main__":
     print(f"QDRANT_URL: {settings.QDRANT_URL}")
     print(f"OPENAI_API_KEY Set: {bool(settings.OPENAI_API_KEY)}")
     print(f"GOOGLE_API_KEY Set: {bool(settings.GOOGLE_API_KEY)}")
+    print(f"FINNHUB_API_KEY Set: {bool(settings.FINNHUB_API_KEY)}")
     # Print updated model names
     print(f"LLM Main Tier (Reasoning): {settings.LLM_MAIN_TIER_MODEL}")
     print(f"LLM Lightweight Tier (Summarization, etc.): {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")

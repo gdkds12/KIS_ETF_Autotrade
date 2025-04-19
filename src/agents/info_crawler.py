@@ -31,6 +31,12 @@ class InfoCrawler:
         self.session.headers.update({'User-Agent': 'AutotradeETFB<x_bin_568>Bot/1.0'})
         
         self.llm_model = info_llm_model
+        # Add Finnhub API key check
+        if not settings.FINNHUB_API_KEY:
+            logger.warning("FINNHUB_API_KEY not set. Market news fetching will fail.")
+            self.finnhub_key = None
+        else:
+            self.finnhub_key = settings.FINNHUB_API_KEY
         logger.info("InfoCrawler initialized.")
 
     def _fetch_raw_data(self) -> list[str]:
@@ -54,41 +60,70 @@ class InfoCrawler:
         logger.info(f"Fetched {len(raw_data)} raw data snippets.")
         return raw_data
 
-    def _summarize_with_llm(self, raw_texts: list[str]) -> str:
-        """LLM을 사용하여 수집된 텍스트를 요약합니다."""
-        if not self.llm_model or not raw_texts:
-            logger.warning("LLM not available or no raw text provided for summary.")
-            # Return a simple concatenation if LLM fails
-            return " ".join(raw_texts)[:500] + ("..." if len(" ".join(raw_texts)) > 500 else "")
-
-        context = "\n".join([f"- {text}" for text in raw_texts])
-        prompt = f"""
-        다음은 최근 수집된 시장 관련 뉴스 및 정보 스니펫입니다. 이 정보들을 종합하여
-        현재 시장 상황과 주요 이슈를 간결하게 한국어로 요약해주세요.
-
-        [수집된 정보]
-        {context}
-
-        [시장 상황 요약]
-        """
+    def _summarize_with_llm(self, prompt: str) -> str:
+        """LLM을 사용하여 주어진 프롬프트에 대한 응답(요약)을 생성합니다."""
+        if not self.llm_model:
+            logger.warning("LLM not available or no prompt provided for summary.")
+            return "(LLM 요약 불가: 모델 없음)"
+        if not prompt:
+            logger.warning("Empty prompt provided to LLM.")
+            return "(LLM 요약 불가: 빈 프롬프트)"
 
         try:
-            logger.info(f"Requesting LLM summary for {len(raw_texts)} snippets...")
+            logger.info(f"Requesting LLM completion for the provided prompt...")
+            # Assuming generate_content takes the prompt directly
             response = self.llm_model.generate_content(prompt)
             summary = response.text.strip()
-            logger.info("Received market summary from LLM.")
+            logger.info("Received LLM completion.")
             return summary
         except Exception as e:
-            logger.error(f"LLM market summary generation failed: {e}", exc_info=True)
+            logger.error(f"LLM completion generation failed: {e}", exc_info=True)
             return f"(LLM 요약 생성 중 오류 발생: {e})"
 
-    def get_market_summary(self) -> str:
-        """시장 정보를 수집하고 LLM으로 요약하여 반환합니다."""
-        logger.info("Getting market summary...")
-        raw_data = self._fetch_raw_data()
-        summary = self._summarize_with_llm(raw_data)
-        logger.info(f"Final market summary generated (length: {len(summary)}). Preview: {summary[:100]}...")
-        return summary
+    def get_market_summary(self, user_query: str) -> str:
+        """
+        사용자 요청(user_query)에 맞춰 Finnhub 뉴스 헤드라인을 수집하고,
+        LLM으로 요약해 돌려줍니다.
+        """
+        logger.info(f"Getting market summary for query: {user_query!r}")
+        
+        if not self.finnhub_key:
+            return "(오류: Finnhub API 키가 설정되지 않았습니다.)"
+            
+        # 1) Finnhub에서 뉴스 헤드라인 가져오기
+        # Use general news category for broader context
+        params = {"category": "general", "token": self.finnhub_key}
+        try:
+            logger.info("Fetching news headlines from Finnhub...")
+            resp = self.session.get("https://finnhub.io/api/v1/news", params=params, timeout=5)
+            resp.raise_for_status()
+            # Limit the number of articles to avoid overly long prompts
+            articles = resp.json()[:5] # Get latest 5 general news articles
+            logger.info(f"Fetched {len(articles)} headlines from Finnhub.")
+            if not articles:
+                 return "(Finnhub에서 관련 뉴스를 찾을 수 없습니다.)"
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Finnhub API request failed: {e}", exc_info=True)
+            return "(시장 뉴스 조회 중 API 요청 오류가 발생했습니다.)"
+        except Exception as e:
+            logger.error(f"Failed to process Finnhub response: {e}", exc_info=True)
+            return "(시장 뉴스 조회 중 오류가 발생했습니다.)"
+
+        # 2) 사용자 질문과 헤드라인 조합하여 프롬프트 생성
+        snippets = [f"- {a.get('headline', a.get('summary', '')).strip()}" for a in articles if a.get('headline') or a.get('summary')]
+        if not snippets:
+             return "(뉴스 헤드라인 정보를 처리할 수 없습니다.)"
+             
+        prompt = (
+            f"사용자 질문: {user_query}\n\n"
+            f"최근 주요 뉴스 헤드라인:\n"
+            + "\n".join(snippets) + "\n\n"
+            f"위 뉴스를 바탕으로 사용자 질문에 대해 한국어로 간결하게 답변해주세요."
+        )
+        logger.debug(f"Generated prompt for LLM summarization:\n{prompt}")
+
+        # 3) LLM 요약 호출
+        return self._summarize_with_llm(prompt)
 
     def _summarize_with_gemini(self, text: str) -> str:
         """Gemini 모델을 사용하여 텍스트 요약"""
@@ -117,44 +152,6 @@ class InfoCrawler:
             # if hasattr(e, 'response') and e.response.prompt_feedback:
             #     logger.error(f"Gemini prompt feedback: {e.response.prompt_feedback}")
             return f"(시장 정보 요약 중 오류 발생: {e})"
-
-    def get_market_summary(self, max_articles: int = 10) -> str:
-        """Fnguide, KRX 등에서 시장 정보를 크롤링하고 Gemini로 요약합니다."""
-        logger.info("Starting market information crawling...")
-        articles = []
-        try:
-            # 1. Fetch Fnguide RSS
-            fnguide_feed = self._fetch_rss(self.fnguide_rss_url)
-            if fnguide_feed:
-                articles.extend(self._parse_feed(fnguide_feed, "Fnguide"))
-
-            # 2. Fetch KRX RSS
-            krx_feed = self._fetch_rss(self.krx_rss_url)
-            if krx_feed:
-                articles.extend(self._parse_feed(krx_feed, "KRX"))
-
-            if not articles:
-                logger.warning("No articles found from any source.")
-                return "수집된 시장 정보가 없습니다."
-
-            # 4. 기사 정렬 및 선택
-            articles.sort(key=lambda x: x.get('published_parsed'), reverse=True)
-            selected_articles = articles[:max_articles]
-            combined_text = "\n\n".join([f"[{a['source']}] {a['title']}\n{a['summary']}" for a in selected_articles])
-            logger.info(f"Combined text from {len(selected_articles)} articles for summarization.")
-
-            # 5. Gemini로 요약
-            if self.llm_model:
-                summary = self._summarize_with_gemini(combined_text)
-                return summary
-            else:
-                # Gemini 모델 없으면 원문 일부 반환
-                logger.warning("Returning partial raw text as Gemini model is unavailable.")
-                return f"최신 시장 뉴스 {len(selected_articles)}건 (요약 불가):\n{combined_text[:1000]}..."
-
-        except Exception as e:
-            logger.error(f"Failed to crawl or summarize market info: {e}", exc_info=True)
-            return f"시장 정보 수집/요약 중 오류 발생: {e}"
 
     def _fetch_rss(self, url: str):
         """지정된 URL에서 RSS 피드를 가져옵니다."""
@@ -193,44 +190,11 @@ class InfoCrawler:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    if not settings.GOOGLE_API_KEY:
-        print("\nWarning: GOOGLE_API_KEY not set. Summarization will be skipped.")
+    if not settings.FINNHUB_API_KEY or not settings.GOOGLE_API_KEY:
+        print("\nWarning: FINNHUB_API_KEY or GOOGLE_API_KEY not set. Summarization might fail.")
     
     crawler = InfoCrawler()
-    # Mock RSS feed for testing
-    crawler.fnguide_rss_url = "https://www.alphavantage.co/query?function=NEWS_SENTIMENT&topics=earnings&apikey=demo" # Example RSS-like JSON
-    crawler.krx_rss_url = "" # Disable KRX for this test
-    
-    # Modify parsing for AlphaVantage JSON feed (if using the example URL)
-    def parse_alphavantage(feed_json, source_name):
-        articles = []
-        if not feed_json or 'feed' not in feed_json:
-             return articles
-        for entry in feed_json['feed'][:5]: # Take first 5
-             articles.append({
-                 'source': source_name,
-                 'title': entry.get('title', 'N/A'),
-                 'link': entry.get('url', 'N/A'),
-                 'published': entry.get('time_published', None),
-                 'published_parsed': None, # TODO: Parse time_published if needed for sorting
-                 'summary': entry.get('summary', 'N/A')
-             })
-        return articles
-        
-    def fetch_alphavantage(url):
-         try:
-             response = crawler.session.get(url, timeout=10)
-             response.raise_for_status()
-             logger.info(f"Fetched data from {url}")
-             return response.json()
-         except RequestException as e:
-             logger.error(f"Error fetching {url}: {e}")
-             return None
-
-    # Override fetch/parse for the example
-    crawler._fetch_rss = fetch_alphavantage
-    crawler._parse_feed = parse_alphavantage
-
-    summary = crawler.get_market_summary()
-    print("\n--- Market Summary (using Gemini if available) ---")
+    test_query = "최근 시장 동향은 어떤가요?"
+    summary = crawler.get_market_summary(test_query)
+    print(f"\n--- Market Summary for query: '{test_query}' ---")
     print(summary) 
