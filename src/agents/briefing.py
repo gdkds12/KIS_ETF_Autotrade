@@ -3,36 +3,32 @@
 import logging
 from datetime import datetime
 from src.config import settings # Import settings for LLM config
-import google.generativeai as genai # Import Gemini
+import openai # Import OpenAI
 import json # To potentially parse complex details if needed
 
 logger = logging.getLogger(__name__)
 
-# --- Gemini 모델 초기화 (BriefingAgent 용) --- 
-briefing_llm_model = None
-if settings.GOOGLE_API_KEY and settings.LLM_LIGHTWEIGHT_TIER_MODEL:
-    try:
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        briefing_llm_model = genai.GenerativeModel(settings.LLM_LIGHTWEIGHT_TIER_MODEL)
-        logger.info(f"BriefingAgent initialized with LLM: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
-    except Exception as e:
-         logger.error(f"Failed to initialize LLM for BriefingAgent: {e}", exc_info=True)
+# --- OpenAI 모델 초기화 (BriefingAgent 용) ---
+# Rely on global setting of openai.api_key done elsewhere
+if settings.OPENAI_API_KEY:
+    # openai.api_key = settings.OPENAI_API_KEY # Avoid setting globally multiple times
+    logger.info(f"BriefingAgent will use OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
 else:
-    logger.warning("GOOGLE_API_KEY or LLM_LIGHTWEIGHT_TIER_MODEL not set. Briefing will be basic.")
+    logger.warning("OPENAI_API_KEY not set. Briefing will be basic.")
 
 class BriefingAgent:
     def __init__(self):
-        # LLM client is initialized globally above
-        self.llm_model = briefing_llm_model
+        # LLM client setup is handled globally
+        # self.llm_model = briefing_llm_model # Remove Gemini model reference
         logger.info("BriefingAgent initialized.")
 
     def _generate_llm_summary(self, execution_results: list) -> str:
-        """LLM을 사용하여 실행 결과에 대한 자연어 요약을 생성합니다."""
-        if not self.llm_model:
-            logger.warning("LLM not available for briefing summary.")
-            return "(LLM 요약 생성 불가)"
+        """OpenAI ChatCompletion을 사용해 실행 결과에 대한 요약을 생성합니다."""
+        if not settings.OPENAI_API_KEY:
+            logger.warning("OpenAI API key not set. Cannot generate summary.")
+            return "(LLM 요약 생성 불가: API 키 미설정)"
 
-        # Prepare context for LLM
+        # Prepare context for LLM (remains the same)
         summary_context = "오늘 자동매매 사이클 실행 결과:\n"
         for result in execution_results:
             action_type = result.get('action_type', 'unknown')
@@ -48,7 +44,14 @@ class BriefingAgent:
                  summary_context += f"- HOLD 결정. 이유: {detail}\n"
             elif action_type == 'briefing':
                  summary_context += f"- LLM 추가 노트: {detail}\n"
-
+            elif action_type == 'briefing_summary': # Handle notes from Orchestrator
+                notes = result.get('notes', [])
+                if notes:
+                    summary_context += "- Orchestrator LLM 노트:\n"
+                    for note in notes:
+                         summary_context += f"  - {note}\n"
+            # Add other action types if necessary
+            
         prompt = f"""
 다음은 자동매매 시스템의 일일 실행 결과입니다. 이 결과를 바탕으로 오늘 시장 상황과 실행된 주요 거래(성공/실패 포함), 그리고 주목할 만한 점을 포함하여 간결하고 이해하기 쉬운 한국어 요약 보고서를 작성해주세요.
 
@@ -58,13 +61,26 @@ class BriefingAgent:
 """
 
         try:
-            logger.info("Requesting LLM summary for briefing report...")
-            response = self.llm_model.generate_content(prompt)
-            llm_summary = response.text.strip()
-            logger.info("Received LLM summary for briefing.")
+            logger.info(f"Requesting OpenAI summary for briefing using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
+            messages = [
+                {"role": "system", "content": "You are an expert assistant that writes concise daily trading summary reports in Korean based on execution logs."}, # System prompt
+                {"role": "user", "content": prompt}
+            ]
+            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY) # Create client
+            resp = client.chat.completions.create(
+                model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
+                messages=messages,
+                temperature=0.5,
+                max_tokens=300 # Adjust token limit
+            )
+            llm_summary = resp.choices[0].message.content.strip()
+            logger.info("Successfully received summary from OpenAI for briefing.")
             return llm_summary
+        except openai.APIError as e:
+            logger.error(f"OpenAI API Error during briefing summary: {e}", exc_info=True)
+            return f"(OpenAI API 오류: {e})"
         except Exception as e:
-            logger.error(f"LLM summary generation failed: {e}", exc_info=True)
+            logger.error(f"OpenAI summary generation failed for briefing: {e}", exc_info=True)
             return f"(LLM 요약 생성 중 오류 발생: {e})"
 
     def create_report_from_actions(self, execution_results: list) -> str:
@@ -72,13 +88,6 @@ class BriefingAgent:
            (LLM 요약 포함)
         Args:
             execution_results: Orchestrator._execute_action_plan의 결과 리스트
-                Example: [
-                    {'action_type': 'buy', 'status': 'success', 'detail': '...', 'kis_response': {...}, 'order': {...}},
-                    {'action_type': 'sell', 'status': 'failed', 'detail': '...', 'kis_response': {...}, 'order': {...}},
-                    {'action_type': 'hold', 'status': 'noted', 'detail': '...'},
-                    {'action_type': 'briefing', 'status': 'noted', 'detail': '...'},
-                    {'action_type': 'briefing_summary', 'notes': ['...']}
-                ]
 
         Returns:
             생성된 Markdown 형식의 보고서 문자열
@@ -90,10 +99,11 @@ class BriefingAgent:
         report_parts.append(f"## 📈 KIS ETF Autotrade Daily Report ({now_str}) 📊")
         report_parts.append("\n")
 
-        # --- LLM 생성 요약 섹션 ---
-        llm_summary = self._generate_llm_summary(execution_results)
-        report_parts.append("**✨ AI 종합 브리핑 ✨**")
-        indented = llm_summary.replace("\n", "\n> ")
+        # --- LLM 생성 요약 섹션 ---  
+        llm_summary = self._generate_llm_summary(execution_results)  
+        report_parts.append("**✨ AI 종합 브리핑 ✨**")  
+        # 멀티라인 요약을 Markdown 인용블록 형태로 들여쓰기  
+        indented = llm_summary.replace("\n", "\n> ")  
         report_parts.append(f"> {indented}")
         report_parts.append("\n")
 
@@ -175,8 +185,8 @@ if __name__ == "__main__":
     print("BriefingAgent class.")
 
     # Ensure API key is available for LLM summary test
-    if not settings.GOOGLE_API_KEY:
-         print("\nWARNING: GOOGLE_API_KEY not found in environment. LLM summary will be skipped.")
+    if not settings.OPENAI_API_KEY:
+         print("\nWARNING: OPENAI_API_KEY not found in environment. LLM summary will be skipped.")
 
     agent = BriefingAgent()
     mock_results = [
