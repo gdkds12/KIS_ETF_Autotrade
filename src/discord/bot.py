@@ -44,7 +44,7 @@ if not settings.DISCORD_ORDER_CONFIRMATION_CHANNEL_ID:
 
 # --- Configuration --- 
 DISCORD_TOKEN = settings.DISCORD_TOKEN
-GUILD_ID = None # Optional: Specify guild ID for faster command registration
+GUILD_ID = 1363088557517967582 # Optional: Specify guild ID for faster command registration
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True # Needs to be enabled in Developer Portal
 INTENTS.members = True # Optional, if member info is needed
