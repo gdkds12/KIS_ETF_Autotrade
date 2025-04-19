@@ -5,6 +5,7 @@ from requests.exceptions import RequestException
 import openai # Keep OpenAI for summarization
 import finnhub # Remove finnhub client import
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed # Import concurrent features
 
 from src.config import settings
 
@@ -204,7 +205,6 @@ class InfoCrawler:
 
         # 2) 기본 키워드 확장 리스트 (동적 변형)
         suffixes = ["최신 뉴스", "시사 동향", "시장 분석", "지표", "최근 변화", "전망", "영향", "관련주"] # Expanded suffixes
-        # Ensure unique subqueries, prioritizing the original query
         subqueries_set = {query}
         for s in suffixes:
             subqueries_set.add(f"{query} {s}")
@@ -213,37 +213,56 @@ class InfoCrawler:
         subqueries = list(subqueries_set)
         logger.debug(f"Generated {len(subqueries)} subqueries: {subqueries}")
 
-        # 3) 각 서브쿼리별로 news + web 검색 결과 스니펫 수집 (Error handling per subquery)
-        snippets = []
-        for q in subqueries:
-            q_snippets = []
+        # 3) ThreadPoolExecutor로 병렬 검색
+        def fetch(q):
+            """Helper function to fetch news and web results for a subquery."""
+            news_results = []
+            web_results = []
             try:
-                news_items = self.search_news(query=q)[:1] # 각 쿼리당 최상위 1건
-                time.sleep(0.1) # API 간격
-                web_items = self.search_web(query=q)[:1]
-                time.sleep(0.1)
-
-                if news_items:
-                    item = news_items[0]
-                    title = item.get("headline") or item.get("title") or ""
-                    desc = item.get("summary") or item.get("snippet") or ""
-                    q_snippets.append(f"- [뉴스] {q}: {title} ({desc})")
-                if web_items:
-                    item = web_items[0]
-                    title = item.get('title') or ""
-                    desc = item.get('snippet') or ""
-                    q_snippets.append(f"- [웹] {q}: {title} ({desc})")
-                    
+                # Note: Limiting results inside fetch, [:1]
+                news_results = self.search_news(query=q)[:1]
+                # No need for sleep here if using ThreadPool
             except Exception as e:
-                 logger.error(f"Error during multi-search for subquery '{q}': {e}", exc_info=True)
-                 # Optionally add an error snippet or just continue
-                 q_snippets.append(f"- [오류] '{q}' 검색 중 오류 발생: {e}")
+                logger.error(f"Error fetching news for subquery '{q}': {e}", exc_info=True)
+            try:
+                web_results = self.search_web(query=q)[:1]
+            except Exception as e:
+                logger.error(f"Error fetching web results for subquery '{q}': {e}", exc_info=True)
+            return (q, news_results, web_results)
 
-            if q_snippets:
-                snippets.extend(q_snippets)
-                
+        snippets = []
+        # Use max_workers based on tries, but consider limiting it globally (e.g., max 10-15)
+        max_workers = min(tries * 2, 10) 
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            # Map queries to future objects
+            future_to_query = {pool.submit(fetch, q): q for q in subqueries}
+            for future in as_completed(future_to_query):
+                q = future_to_query[future]
+                try:
+                    _q, news, web = future.result() # q should match _q
+                    q_snippets = []
+                    if news:
+                        item = news[0]
+                        title = item.get("headline") or item.get("title") or ""
+                        desc = item.get("summary") or item.get("snippet") or ""
+                        q_snippets.append(f"- [뉴스] {q}: {title} ({desc})")
+                    if web:
+                        item = web[0]
+                        title = item.get('title') or ""
+                        desc = item.get('snippet') or ""
+                        q_snippets.append(f"- [웹] {q}: {title} ({desc})")
+                    if q_snippets:
+                        snippets.extend(q_snippets)
+                        
+                except Exception as exc:
+                    logger.error(f"Subquery '{q}' generated an exception: {exc}", exc_info=True)
+                    snippets.append(f"- [오류] '{q}' 처리 중 오류 발생: {exc}")
+        
+        # Ensure consistent sorting if needed, though as_completed yields in completion order
+        # snippets.sort() # Example if sorting is desired
+
         if not snippets:
-            logger.warning(f"Multi-search for '{query}' yielded no results.")
+            logger.warning(f"Multi-search for '{query}' yielded no results after parallel fetch.")
             return "(관련 정보를 찾을 수 없습니다.)"
 
         # 4) LLM 요약 프롬프트 구성
@@ -253,7 +272,7 @@ class InfoCrawler:
             f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
             "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
         )
-        logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
+        logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...") # Corrected log message format
         return self._summarize_with_llm(prompt)
 
     def search_web(self, query: str, num_results: int = 5) -> list[dict]:

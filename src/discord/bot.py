@@ -204,7 +204,8 @@ class TradingBot(commands.Bot):
             "- search_news(query) → Finnhub API를 이용한 최신 뉴스 리스트 검색 (시장 동향, 기업 이슈 등)\n"
             "- multi_search(query, attempts) → query를 바탕으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 종합 요약\n"
             "- search_web(query)       → 단일 쿼리 일반 웹 검색(SerpAPI)\n"
-            "— **종합적인 조사**가 필요할 때는 `multi_search`를, **단순 웹 검색**은 `search_web`을 사용하세요.\n"
+            "— **'동향', '현황', '추세'** 같은 키워드가 포함된 질문에는 **검색 없이** 답변하지 말고 반드시 `multi_search`를 호출하여 데이터를 수집·분석하세요.\n"
+            "— 일반 정책·상세 사안 조사엔 `search_web`, 뉴스 중심 분석엔 `search_news` 또는 `get_market_summary`도 활용하세요.\n"
             "모든 답변은 한국어로 제공하세요."
         )
 
@@ -402,9 +403,24 @@ class TradingBot(commands.Bot):
                     if suggested_order:
                         view = OrderConfirmationView(bot=self, session_thread_id=message.channel.id, order_details=suggested_order, db_session_factory=self.db_session_factory)
                     
-                    # 자연어 질문에는 debug_info 없이 순수 답변만 전송
-                    await message.channel.send(response_text, view=view)
-                    logger.info(f"[Session:{message.channel.id}] Sent response to user.")
+                    # Embed 로 예쁘게 감싸서 전송
+                    # Determine title based on whether a function was called or not (simple heuristic)
+                    # We don't have the direct function name here easily without more plumbing,
+                    # so let's use a generic title or one based on order suggestion.
+                    embed_title = "💬 AI 응답"
+                    if suggested_order: 
+                         embed_title = "💡 주문 제안"
+                    elif "요약" in message.content or "동향" in message.content or "분석" in message.content:
+                         embed_title = "🔍 검색 결과 요약"
+                         
+                    embed = make_summary_embed(
+                        title=embed_title,
+                        summary=response_text, # response_text might be long, consider splitting later
+                        footer="KIS Autotrade AI" # Simplified footer
+                    )
+                    await message.channel.send(embed=embed, view=view)
+
+                    logger.info(f"[Session:{message.channel.id}] Sent response embed to user.")
 
                 except Exception as e:
                     logger.error(f"[Session:{message.channel.id}] Error processing message: {e}", exc_info=True)
@@ -931,3 +947,16 @@ if __name__ == "__main__":
     
     print("Attempting to run the Discord bot...")
     run_discord_bot() 
+
+def make_summary_embed(title: str, summary: str, footer: str = None) -> Embed:
+    """요약 텍스트를 받아 Discord Embed 객체로 반환."""
+    embed = Embed(
+        title=title,
+        description=summary,
+        color=0x3498db,               # 파란 계열 색상
+        # timestamp=datetime.utcnow()   # Use timezone aware datetime
+        timestamp=datetime.now(timezone.utc)
+    )
+    if footer:
+        embed.set_footer(text=footer)
+    return embed 
