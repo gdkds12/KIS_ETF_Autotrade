@@ -25,7 +25,8 @@ from qdrant_client import QdrantClient
 # Update import path for DiscordRequestType
 from src.utils.discord_utils import DiscordRequestType
 import asyncio # For potential async operations
-from src.utils.logger import setup_logger
+# from src.agents.kis_developer import KisDeveloper # Removed
+# from src.utils.logger import setup_logger # Remove custom logger import
 
 # NEW: function registry
 from src.utils.registry import command, COMMANDS
