@@ -44,7 +44,7 @@ COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/pytho
 # Copy the application source code
 COPY src ./src
 # COPY alembic.ini ./  <-- Removed as alembic.ini is not available
-COPY alembic ./alembic
+# COPY alembic ./alembic # Temporarily commented out to isolate build issue
 
 EXPOSE 8000
 
