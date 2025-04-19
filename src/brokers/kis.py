@@ -247,19 +247,23 @@ class KisBroker:
         try:
             logger.info("Requesting account balance...")
             response_data = self._request("GET", path, tr_id, params=params)
-            # KIS 잔고 응답은 output1 (주식 잔고), output2 (펀드 잔고), output3 (기타 잔고) 등으로 나뉨
-            # 필요한 정보 (예: 예수금, 총평가금액, 총손익률) 추출
+            # KIS 잔고 응답은 output1 (주식 잔고 리스트), output2 (펀드 잔고 또는 기타 잔고)
             output1 = response_data.get("output1", [])
-            output2 = response_data.get("output2", {}) # 예수금 등은 여기에 있을 수 있음
+            raw_output2 = response_data.get("output2", {})
+            # output2가 리스트로 올 경우 첫 번째 요소 사용
+            if isinstance(raw_output2, list):
+                output2 = raw_output2[0] if raw_output2 else {}
+            else:
+                output2 = raw_output2 or {}
             
             # 정보 가공 (KIS 응답 구조에 따라 크게 달라짐)
             balance_info = {
                 'account_number': f"{self.cano}-{self.acnt_prdt_cd}",
-                'available_cash': float(output2.get('dnca_tot_amt', 0)), # 예수금 총금액 (추정)
-                'total_asset_value': float(output2.get('tot_evlu_amt', 0)), # 총평가금액 (추정)
-                'total_purchase_amount': float(output2.get('tot_pchs_amt', 0)), # 총매입금액 (추정)
-                'total_pnl': float(output2.get('tot_prfi_rt', 0)), # 총손익 (추정)
-                'total_pnl_percent': float(output2.get('tot_prfi_rt', 0)), # 총손익률 (추정)
+                'available_cash': float(output2.get('dnca_tot_amt', 0)),      # 예수금 총금액
+                'total_asset_value': float(output2.get('tot_evlu_amt', 0)),   # 총평가금액
+                'total_purchase_amount': float(output2.get('tot_pchs_amt', 0)),# 총매입금액
+                'total_pnl': float(output2.get('tot_prfi_amt', 0)),          # 총손익금액 (필드명 확인 필요)
+                'total_pnl_percent': float(output2.get('tot_prfi_rt', 0)),    # 총손익률
                 # ... 기타 필요한 정보 ...
             }
             logger.info(f"Account balance retrieved: Cash={balance_info['available_cash']}, TotalValue={balance_info['total_asset_value']}")
