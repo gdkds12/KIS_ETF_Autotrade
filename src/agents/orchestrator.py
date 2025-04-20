@@ -3,9 +3,8 @@
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-import openai
-from openai import OpenAI # Import OpenAI
 import json # For parsing LLM response
+from src.utils.azure_openai import azure_chat_completion
 import uuid
 from datetime import datetime
 import asyncio # Add asyncio import
@@ -120,15 +119,8 @@ class Orchestrator:
 
         # Initialize OpenAI API Key
         if settings.AZURE_OPENAI_API_KEY:
-            # Azure OpenAI 전역 설정
-            openai.api_type = "azure"
-            openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-            openai.api_version = settings.AZURE_OPENAI_API_VERSION
-            openai.api_key = settings.AZURE_OPENAI_API_KEY
-            # 클라이언트는 api_key만 전달
-            self.openai_client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
-            self.llm_model_name = settings.LLM_MAIN_TIER_MODEL  # Store model name
-            logger.info(f"Orchestrator will use OpenAI model: {self.llm_model_name}")
+            self.llm_model_name = settings.LLM_MAIN_TIER_MODEL
+            logger.info(f"Orchestrator will use Azure OpenAI deployment: {self.llm_model_name}")
         else:
             logger.warning("OPENAI_API_KEY not set. Orchestrator LLM functionality will be disabled.")
 
@@ -292,21 +284,18 @@ class Orchestrator:
         """
 
         try:
-            logger.info(f"Requesting OpenAI action plan using {self.llm_model_name}...")
+            logger.info(f"Requesting Azure OpenAI action plan using {self.llm_model_name}...")
             messages = [
                 {"role": "system", "content": "You are an AI assistant that generates JSON action plans for an ETF autotrading system based on provided market context and portfolio data."}, # System prompt
                 {"role": "user", "content": prompt}
             ]
-            client = self.openai_client # Create client
-            resp = client.chat.completions.create(
-                model=self.llm_model_name, # Use stored model name
+            resp_json = azure_chat_completion(
+                deployment=self.llm_model_name,
                 messages=messages,
-                **get_temperature_param(self.llm_model_name, 0.7),
-                **get_token_param(self.llm_model_name, 800),
-                # Consider response_format for JSON mode if using compatible models
-                # response_format={"type": "json_object"} 
+                max_tokens=800,
+                temperature=0.7
             )
-            text = resp.choices[0].message.content.strip()
+            text = resp_json["choices"][0]["message"]["content"].strip()
             
             # Extract JSON part (improved robustness)
             json_block = None
@@ -323,7 +312,7 @@ class Orchestrator:
                 # Validate if it's actually JSON before returning
                 try:
                     json.loads(json_block) # Try parsing
-                    logger.info(f"Received JSON action plan from OpenAI: {json_block}")
+                    logger.info(f"Received JSON action plan from Azure OpenAI: {json_block}")
                     return json_block
                 except json.JSONDecodeError:
                      logger.error(f"Extracted block is not valid JSON: {json_block}")
@@ -332,11 +321,8 @@ class Orchestrator:
                 logger.error(f"Could not extract JSON action plan from LLM response: {text}")
                 return None
 
-        except openai.APIError as e:
-             logger.error(f"OpenAI API Error during action plan generation: {e}", exc_info=True)
-             return None
         except Exception as e:
-            logger.error(f"OpenAI action plan generation failed: {e}", exc_info=True)
+            logger.error(f"Azure OpenAI action plan generation failed: {e}", exc_info=True)
             return None
 
     def _execute_action_plan(self, action_plan: list) -> list:
