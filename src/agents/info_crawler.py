@@ -48,15 +48,7 @@ class InfoCrawler:
         # Tavily 설정 (뉴스 검색)
         self.tavily_client = tavily.Client(settings.TAVILY_API_KEY)
         
-        # SerpAPI 설정 (일반 웹 검색용)
-        if not settings.SERPAPI_API_KEY:
-            logger.warning("SERPAPI_API_KEY not set. Web search functionality will be disabled.")
-            self.serpapi_key = None
-        else:
-            self.serpapi_key = settings.SERPAPI_API_KEY
-        self.serpapi_url = "https://serpapi.com/search"
-        
-        logger.info("InfoCrawler initialized (Finnhub + Tavily + Web Search).")
+        logger.info("InfoCrawler initialized (Finnhub + Tavily).")
 
     # Remove old _fetch_raw_data
     # def _fetch_raw_data(...)
