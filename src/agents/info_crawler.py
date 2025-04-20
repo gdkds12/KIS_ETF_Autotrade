@@ -81,10 +81,8 @@ class InfoCrawler:
             m.content[-1].text.value
             for m in msgs if m.role == "assistant" and m.content
         ]
-            return news_list
-        except Exception as e:
-            logger.error(f"Tavily API error during news search: {e}", exc_info=True)
-            return []
+
+    # except, return [] 블록 제거 및 들여쓰기 정상화
 
     # New method to search symbols using requests
     def search_web(self, query: str) -> list[dict]:

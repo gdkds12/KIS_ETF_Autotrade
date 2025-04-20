@@ -56,12 +56,8 @@ if settings.OPENAI_API_KEY:
     openai.api_version = settings.AZURE_OPENAI_API_VERSION
     openai.api_key = settings.AZURE_OPENAI_API_KEY
     logger.info("Configured OpenAI SDK for Azure.")
-    openai_client = AsyncOpenAI(
-        api_key=settings.OPENAI_API_KEY,
-        api_type="azure",
-        api_base=settings.AZURE_OPENAI_ENDPOINT,
-        api_version=settings.AZURE_OPENAI_API_VERSION
-    )
+    # AsyncOpenAI는 모듈 레벨 설정(openai.api_type, api_base, api_version)을 사용합니다
+    openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
     logger.info("OpenAI client initialized.")
 else:
     logger.warning("OPENAI_API_KEY not set. OpenAI features will be disabled.")
