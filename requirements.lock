@@ -20,8 +20,8 @@ alembic>=1.13.0,<1.14.0 # For DB migrations
 aiohttp>=3.9.0,<3.10.0 # For discord bot http requests
 finnhub-python>=2.4.0,<2.5.0 # Remove Finnhub client library
 
-# Tavily 패키지 추가
-git+https://github.com/tavily-ai/tavily-python.git#egg=tavily
+# Tavily 패키지 PyPI에서 설치
+tavily-python==1.0.0  # Tavily 최신 버전 설치
 
 # LLM Libraries
 openai>=1.17.0
