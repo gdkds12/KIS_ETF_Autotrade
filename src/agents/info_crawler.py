@@ -22,16 +22,7 @@ def get_temperature_param(model: str, temperature: float) -> dict:
     else:
         return {"temperature": temperature}
 
-# --- OpenAI 모델 초기화 (InfoCrawler 용) --- 
-if settings.OPENAI_API_KEY:
-    # Check if openai.api_key is already set or needs setting
-    # Note: Setting it globally might have side effects if other parts use different keys.
-    # Consider passing the client or key if needed.
-    if not getattr(openai, 'api_key', None):
-        openai.api_key = settings.OPENAI_API_KEY
-    logger.info(f"InfoCrawler will use OpenAI model: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
-else:
-    logger.warning("OPENAI_API_KEY not set. InfoCrawler LLM summary will be basic.")
+logger.info("InfoCrawler 초기화 완료: Google CSE + Finnhub 기반 정보 수집 및 Azure OpenAI 요약 사용")
 
 class InfoCrawler:
     """
