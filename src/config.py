@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     # 모의투자 계좌 사용 여부 (환경 변수 KIS_VIRTUAL_ACCOUNT=true/false 로 설정 가능)
     KIS_VIRTUAL_ACCOUNT: bool = True
 
-    # Bing Search API Key
-    BING_API_KEY: str
+    # Bing Search API Key (Optional when using Azure Foundry for web search)
+    BING_API_KEY: str | None = None
 
     # Discord Bot Configuration
     DISCORD_TOKEN: str
