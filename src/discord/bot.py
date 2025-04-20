@@ -76,7 +76,11 @@ def supports_function_messages(model: str) -> bool:
 def filter_messages_for_model(model: str, messages: list) -> list:
     if supports_function_messages(model):
         return messages
-    return [m for m in messages if m.get("role") != "function"]
+    return [
+        m for m in messages
+        if not hasattr(m, "role") or (hasattr(m, "role") and m.role != "function")
+        if isinstance(m, dict) or hasattr(m, "role")  # 안전장치: ChatCompletionMessage 또는 dict만 필터링
+    ]
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Embed 생성 유틸 (임포트 직후에 위치해야 on_message 등에서 인식됩니다)
@@ -351,14 +355,13 @@ class TradingBot(commands.Bot):
                 #   2nd completion - Send result back to LLM
                 # -----------------------------------------
                 logger.info(f"Sending function result back to LLM for final response (session {llm_session_id}).")
-                second_raw_messages = messages + [
-                    message_from_llm,
-                    {
+                second_raw_messages = [*messages, message_from_llm]
+                if supports_function_messages(settings.LLM_MAIN_TIER_MODEL):
+                    second_raw_messages.append({
                         "role": "function",
                         "name": func_name,
                         "content": json.dumps(fn_result, ensure_ascii=False)
-                    }
-                ]
+                    })
                 second_messages = filter_messages_for_model(settings.LLM_MAIN_TIER_MODEL, second_raw_messages)
                 second_completion = await openai_client.chat.completions.create(
                     model=settings.LLM_MAIN_TIER_MODEL,
