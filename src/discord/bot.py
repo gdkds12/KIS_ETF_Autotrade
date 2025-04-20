@@ -355,20 +355,39 @@ class TradingBot(commands.Bot):
                 #   2nd completion - Send result back to LLM
                 # -----------------------------------------
                 logger.info(f"Sending function result back to LLM for final response (session {llm_session_id}).")
-                second_raw_messages = [*messages, message_from_llm, {
-                    "role": "function",
-                    "name": func_name,
-                    "content": json.dumps(fn_result, ensure_ascii=False)
-                }]
-                second_messages = filter_messages_for_model(settings.LLM_MAIN_TIER_MODEL, second_raw_messages)
-                second_completion = await openai_client.chat.completions.create(
-                    model=settings.LLM_MAIN_TIER_MODEL,
-                    messages=second_messages,
-                    **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
-                    **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
-                    # NOTE: Do not pass functions here, we want a direct answer now
-                )
-                response_text = second_completion.choices[0].message.content
+                if supports_function_messages(settings.LLM_MAIN_TIER_MODEL):
+                    second_raw_messages = [*messages, message_from_llm, {
+                        "role": "function",
+                        "name": func_name,
+                        "content": json.dumps(fn_result, ensure_ascii=False)
+                    }]
+                    second_messages = filter_messages_for_model(settings.LLM_MAIN_TIER_MODEL, second_raw_messages)
+                    second_completion = await openai_client.chat.completions.create(
+                        model=settings.LLM_MAIN_TIER_MODEL,
+                        messages=second_messages,
+                        **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
+                        **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
+                        # NOTE: Do not pass functions here, we want a direct answer now
+                    )
+                    response_text = second_completion.choices[0].message.content
+                else:
+                    fallback_prompt = (
+                        f"사용자 질문: {user_message}\n\n"
+                        f"다음은 해당 요청에 대해 시스템이 가져온 실제 데이터입니다.\n"
+                        f"```json\n{json.dumps(fn_result, ensure_ascii=False, indent=2)}\n```\n"
+                        f"이 데이터를 바탕으로 사용자 요청에 답변해 주세요."
+                    )
+                    logger.info(f"Using fallback completion for o4 model (session {llm_session_id}).")
+                    second_completion = await openai_client.chat.completions.create(
+                        model=settings.LLM_MAIN_TIER_MODEL,
+                        messages=[
+                            {"role": "system", "content": "당신은 금융 정보를 요약하고 설명하는 도우미입니다."},
+                            {"role": "user", "content": fallback_prompt}
+                        ],
+                        **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
+                        **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
+                    )
+                    response_text = second_completion.choices[0].message.content
                 logger.info(f"Received final response from OpenAI after function call (session {llm_session_id}).")
 
             # --- Order Parsing (applies to final response_text) --- 
