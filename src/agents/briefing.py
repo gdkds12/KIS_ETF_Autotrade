@@ -88,7 +88,12 @@ class BriefingAgent:
             openai.api_version = settings.AZURE_OPENAI_API_VERSION
             openai.api_key = settings.AZURE_OPENAI_API_KEY
             # 클라이언트는 api_key만 전달
-            client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+            client = OpenAI(
+                api_key=settings.AZURE_OPENAI_API_KEY,
+                api_type="azure",
+                api_base=settings.AZURE_OPENAI_ENDPOINT,
+                api_version=settings.AZURE_OPENAI_API_VERSION
+            )
  # Create client
             resp = client.chat.completions.create(
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
