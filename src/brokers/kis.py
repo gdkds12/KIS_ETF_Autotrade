@@ -38,10 +38,11 @@ class KisBroker:
     TR_IDS = {
         "get_balance":       "TTTC8434R",
         "get_positions":     "TTTC8434R",
-        "get_quote":         "FHKST01010100",
-        "order_cash_buy":    "TTTC0801U", # Diff는 매수/매도 순서가 반대였으나, 코드 로직상 buy=02가 맞음
+        "get_quote_domestic": "FHKST01010100",  # 국내 주식/ETF 조회
+        "get_quote_foreign":  "FHKST03010100",  # 해외 주식/ETF 조회 (미국 ETF 포함)
+        "order_cash_buy":    "TTTC0801U",
         "order_cash_sell":   "TTTC0802U",
-        "get_historical_data": "FHKST03010100" # 추가 (get_historical_data 용)
+        "get_historical_data": "FHKST03010100"
     }
 
     def __init__(self, app_key: str, app_secret: str, base_url: str, cano: str, acnt_prdt_cd: str, virtual_account: bool = True):
@@ -190,33 +191,33 @@ class KisBroker:
             raise KisBrokerError(f"Unexpected error during KIS API request: {e}") from e
 
     def is_overseas_symbol(self, symbol: str) -> bool:
-        """심볼이 영문 대문자(3~5자) 또는 .O 등으로 끝나면 해외주식으로 간주 (간단 heuristic)"""
+        """(기존) 심볼로 해외주식 여부 판별 (호환성 유지)"""
         import re
-        # 예: SPY, AAPL, TSLA, MSFT, QQQ, NVDA, etc. (4~5자 영문 대문자)
-        # 또는 .O, .N, .A 등 해외 심볼 접미사
         if re.fullmatch(r'[A-Z]{3,5}', symbol):
             return True
         if re.search(r'\.[A-Z]$', symbol):
             return True
         return False
 
-    def get_quote(self, symbol: str) -> dict:
-        """주식 현재가 시세(체결)를 조회합니다. 국내/해외 구분"""
-        # Check if the symbol is for an overseas stock
-        is_overseas = self.is_overseas_symbol(symbol)
+    def determine_foreign(self, query: str) -> bool:
+        """질문에 '미국', '해외' 등 해외 관련 키워드가 있으면 True 반환"""
+        query = query.lower()
+        if '미국' in query or '해외' in query or 'us' in query or 'usa' in query:
+            return True
+        return False
+
+    def get_quote(self, symbol: str, is_foreign: bool = False) -> dict:
+        """국내/해외(미국) 주식/ETF 시세 조회 (is_foreign 플래그로 구분)"""
         try:
-            if is_overseas:
-                # 해외 주식 API 호출 (예: SPY)
+            if is_foreign:
                 path = "/uapi/overseas-price/v1/quotations/price"
-                tr_id = "HHDFS00000300"  # 해외 주식 시세 조회용 TR ID
-                params = {"EXCD": "NAS", "SYMB": symbol}  # NAS: NASDAQ 거래소, SPY는 NASDAQ 상장
+                tr_id = self.TR_IDS["get_quote_foreign"]
+                params = {"EXCD": "NAS", "SYMB": symbol}  # 필요시 시장코드 파라미터화
             else:
-                # 국내 주식 API 호출
                 path = "/uapi/domestic-stock/v1/quotations/inquire-price"
-                tr_id = self._compute_tr_id("get_quote")  # 국내 주식용 TR ID
-                params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}  # 국내 주식
+                tr_id = self.TR_IDS["get_quote_domestic"]
+                params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}
             response_data = self._request("GET", path, tr_id, params=params)
-            # 해외 주식은 output이 다를 수 있으므로 그대로 반환
             return response_data.get("output", response_data)
         except KisBrokerError as e:
             logger.error(f"Failed to get quote for {symbol}: {e}")

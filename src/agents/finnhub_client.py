@@ -4,7 +4,7 @@ Finnhub API 클라이언트 모듈
 
 이 모듈은 Finnhub API와의 상호작용을 위한 클라이언트 클래스를 제공합니다.
 """
-import tavily
+
 import os
 import logging
 from typing import List, Dict, Any
@@ -12,9 +12,6 @@ from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class TavilyClientError(Exception):
-    """Custom exception for TavilyClient errors."""
-    pass
 
 import finnhub
 
@@ -22,7 +19,12 @@ class FinnhubClient:
     def __init__(self, token: str):
         if not token:
             raise ValueError("Finnhub API token is required.")
-        self.client = finnhub.Client(api_key=token)
+        try:
+            self.client = finnhub.Client(api_key=token)
+            logger.info("Finnhub client initialized successfully.")
+        except Exception as e:
+            logger.error(f"Failed to initialize Finnhub client: {e}", exc_info=True)
+            raise RuntimeError(f"Finnhub client initialization failed: {e}")
 
     def search(self, query: str):
         # 심볼/회사 검색
@@ -31,18 +33,6 @@ class FinnhubClient:
         except Exception as e:
             raise RuntimeError(f"Finnhub symbol search failed: {e}")
 
-    def __init__(self, token: str):
-        """Initializes the Tavily client using the provided API token."""
-        if not token:
-            logger.error("Tavily API token is missing.")
-            raise ValueError("Tavily API token is required.")
-            
-        try:
-            self.client = tavily.Client(api_key=token)
-            logger.info("Tavily client initialized successfully.")
-        except Exception as e:
-             logger.error(f"Failed to initialize Tavily client: {e}", exc_info=True)
-             raise TavilyClientError(f"Tavily client initialization failed: {e}")
 
     def get_quote(self, symbol: str):
         """Fetches the real-time quote for a given stock symbol."""
