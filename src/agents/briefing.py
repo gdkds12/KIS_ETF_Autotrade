@@ -23,9 +23,9 @@ def get_temperature_param(model: str, temperature: float) -> dict:
         return {"temperature": temperature}
 
 # --- OpenAI 모델 초기화 (BriefingAgent 용) ---
-# Rely on global setting of openai.api_key done elsewhere
 if settings.OPENAI_API_KEY:
-    # Configure Azure-flavored OpenAI SDK
+    # Azure OpenAI SDK 설정
+    import openai
     openai.api_type = "azure"
     openai.api_base = settings.AZURE_OPENAI_ENDPOINT
     openai.api_version = settings.AZURE_OPENAI_API_VERSION
