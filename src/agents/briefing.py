@@ -9,7 +9,7 @@ import json # To potentially parse complex details if needed
 
 logger = logging.getLogger(__name__)
 
-# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
+# GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
 def get_token_param(model: str, limit: int) -> dict:
     if model.startswith("o4") or model.startswith("gpt-4o"):
         return {"max_completion_tokens": limit}
@@ -94,7 +94,6 @@ class BriefingAgent:
                 api_base=settings.AZURE_OPENAI_ENDPOINT,
                 api_version=settings.AZURE_OPENAI_API_VERSION
             )
- # Create client
             resp = client.chat.completions.create(
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
                 messages=messages,
