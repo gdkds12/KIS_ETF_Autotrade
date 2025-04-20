@@ -24,6 +24,7 @@
     COPY requirements.lock ./
     
     # Install project dependencies using pip
+    # requirements.lock에 tavily가 포함되어 있으므로 별도 명령 없이 자동 설치됩니다.
     # Use --no-cache-dir to reduce image size
     # Pin httpx to a version compatible with OpenAI SDK
     RUN pip install --no-cache-dir -r requirements.lock && \
