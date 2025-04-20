@@ -206,16 +206,18 @@ class InfoCrawler:
     def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> dict:
         """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
         logger.info(f"Performing multi-search for query: '{query}' with {attempts} attempts (max {max_attempts})")
-        # 1) 시도 횟수 보정
-        tries = 3 # Fix number of subqueries to 3
+        # 1) 시도 횟수 보정 (사용자 지정 attempts 반영, 1~max_attempts 범위)
+        tries = max(1, min(attempts, max_attempts))
 
-        # 2) 기본 키워드 확장 리스트 (동적 변형)
-        suffixes = ["최신 뉴스", "시장 동향"] # Reduced suffix list for about 3 total queries
+        # 2) 키워드 확장용 suffix 리스트 (attempts에 맞춰 다양한 suffix 사용)
+        suffixes = [
+            "최신 뉴스", "시장 동향", "분석", "전망", "이슈", "주요 토픽", "핫토픽"
+        ]
         subqueries_set = {query}
         for s in suffixes:
-            subqueries_set.add(f"{query} {s}")
             if len(subqueries_set) >= tries:
                 break
+            subqueries_set.add(f"{query} {s}")
         subqueries = list(subqueries_set)
         logger.debug(f"Generated {len(subqueries)} subqueries: {subqueries}")
 

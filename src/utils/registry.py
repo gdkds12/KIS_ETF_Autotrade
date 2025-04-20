@@ -90,10 +90,20 @@ def search_news(query: str) -> list:
 
 @command
 def search_symbols(query: str) -> list:
-    """Finnhub로 종목/회사 검색 (query)."""
-    if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'info_crawler'):
+    """KIS API로 종목/회사 검색 (query)."""
+    if ORCHESTRATOR is None:
         return []
-    return ORCHESTRATOR.info_crawler.search_symbols(query)
+    # KIS API를 활용한 종목 검색 우선시
+    broker = ORCHESTRATOR.broker
+    # 해외 여부 자동 감지
+    is_foreign = broker.is_overseas_symbol(query)
+    results = broker.search_symbol(query=query, is_foreign=is_foreign)
+    if results:
+        return results
+    # fallback: 기존 InfoCrawler 검색
+    if hasattr(ORCHESTRATOR, 'info_crawler'):
+        return ORCHESTRATOR.info_crawler.search_web(query=query)
+    return []
 
 @command
 def search_web(query: str) -> list:

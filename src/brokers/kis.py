@@ -40,9 +40,10 @@ class KisBroker:
         "get_positions":     "TTTC8434R",
         "get_quote_domestic": "FHKST01010100",  # 국내 주식/ETF 조회
         "get_quote_foreign":  "FHKST03010100",  # 해외 주식/ETF 조회 (미국 ETF 포함)
-        "order_cash_buy":    "TTTC0801U",
-        "order_cash_sell":   "TTTC0802U",
-        "get_historical_data": "FHKST03010100"
+        "get_historical_data": "FHKST03010100",
+        # 종목 검색용 TR ID (예시값, 실제 KIS 문서 확인 필요)
+        "search_symbol_domestic": "FHKST01010200",
+        "search_symbol_foreign":  "FHKST03010200",
     }
 
     def __init__(self, app_key: str, app_secret: str, base_url: str, cano: str, acnt_prdt_cd: str, virtual_account: bool = True):
