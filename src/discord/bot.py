@@ -355,13 +355,11 @@ class TradingBot(commands.Bot):
                 #   2nd completion - Send result back to LLM
                 # -----------------------------------------
                 logger.info(f"Sending function result back to LLM for final response (session {llm_session_id}).")
-                second_raw_messages = [*messages, message_from_llm]
-                if supports_function_messages(settings.LLM_MAIN_TIER_MODEL):
-                    second_raw_messages.append({
-                        "role": "function",
-                        "name": func_name,
-                        "content": json.dumps(fn_result, ensure_ascii=False)
-                    })
+                second_raw_messages = [*messages, message_from_llm, {
+                    "role": "function",
+                    "name": func_name,
+                    "content": json.dumps(fn_result, ensure_ascii=False)
+                }]
                 second_messages = filter_messages_for_model(settings.LLM_MAIN_TIER_MODEL, second_raw_messages)
                 second_completion = await openai_client.chat.completions.create(
                     model=settings.LLM_MAIN_TIER_MODEL,
