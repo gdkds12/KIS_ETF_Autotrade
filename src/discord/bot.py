@@ -64,6 +64,12 @@ def get_token_param(model: str, limit: int) -> dict:
     else:
         return {"max_tokens": limit}
 
+def get_temperature_param(model: str, temperature: float) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {}  # 기본값 1.0만 지원
+    else:
+        return {"temperature": temperature}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Embed 생성 유틸 (임포트 직후에 위치해야 on_message 등에서 인식됩니다)
 def make_summary_embed(title: str, summary: str, footer: str = None) -> Embed:
@@ -256,7 +262,7 @@ class TradingBot(commands.Bot):
                 messages=messages,
                 functions=functions, # Pass function specs
                 function_call="auto", # Let the model decide
-                temperature=0.7,
+                **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
                 **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
             )
 
@@ -346,7 +352,7 @@ class TradingBot(commands.Bot):
                             "content": json.dumps(fn_result, ensure_ascii=False),
                         },
                     ],
-                    temperature=0.7,
+                    **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
                     **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
                     # NOTE: Do not pass functions here, we want a direct answer now
                 )

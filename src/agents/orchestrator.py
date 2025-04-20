@@ -40,6 +40,12 @@ def get_token_param(model: str, limit: int) -> dict:
     else:
         return {"max_tokens": limit}
 
+def get_temperature_param(model: str, temperature: float) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {}  # 기본값 1.0만 지원
+    else:
+        return {"temperature": temperature}
+
 # --- Helper for Retrying Broker Operations ---
 # Define which KIS errors might be worth retrying (e.g., temporary network issues, maybe rate limits)
 def is_retryable_kis_error(exception):
@@ -290,7 +296,7 @@ class Orchestrator:
             resp = client.chat.completions.create(
                 model=self.llm_model_name, # Use stored model name
                 messages=messages,
-                temperature=0.7,
+                **get_temperature_param(self.llm_model_name, 0.7),
                 **get_token_param(self.llm_model_name, 800),
                 # Consider response_format for JSON mode if using compatible models
                 # response_format={"type": "json_object"} 

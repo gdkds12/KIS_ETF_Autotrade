@@ -28,6 +28,12 @@ def get_token_param(model: str, limit: int) -> dict:
     else:
         return {"max_tokens": limit}
 
+def get_temperature_param(model: str, temperature: float) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {}  # 기본값 1.0만 지원
+    else:
+        return {"temperature": temperature}
+
 # --- OpenAI 모델 초기화 (MemoryRAG 용) ---
 # Rely on global setting of openai.api_key done elsewhere (e.g., orchestrator, bot setup)
 if settings.OPENAI_API_KEY:
@@ -60,7 +66,7 @@ def summarize_text(text: str, topic: str = None) -> str:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content}
             ],
-            temperature=0.3,
+            **get_temperature_param(settings.LLM_SUMMARY_TIER_MODEL, 0.3),
             **get_token_param(settings.LLM_SUMMARY_TIER_MODEL, 300),
         )
         summary = resp.choices[0].message.content.strip()

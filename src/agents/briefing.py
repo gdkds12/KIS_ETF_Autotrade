@@ -15,6 +15,12 @@ def get_token_param(model: str, limit: int) -> dict:
     else:
         return {"max_tokens": limit}
 
+def get_temperature_param(model: str, temperature: float) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {}  # 기본값 1.0만 지원
+    else:
+        return {"temperature": temperature}
+
 # --- OpenAI 모델 초기화 (BriefingAgent 용) ---
 # Rely on global setting of openai.api_key done elsewhere
 if settings.OPENAI_API_KEY:
@@ -77,7 +83,7 @@ class BriefingAgent:
             resp = client.chat.completions.create(
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
                 messages=messages,
-                temperature=0.5,
+                **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.5),
                 **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 300)
             )
             llm_summary = resp.choices[0].message.content.strip()

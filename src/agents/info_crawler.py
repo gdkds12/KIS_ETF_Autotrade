@@ -18,6 +18,12 @@ def get_token_param(model: str, limit: int) -> dict:
     else:
         return {"max_tokens": limit}
 
+def get_temperature_param(model: str, temperature: float) -> dict:
+    if model.startswith("o4") or model.startswith("gpt-4o"):
+        return {}  # 기본값 1.0만 지원
+    else:
+        return {"temperature": temperature}
+
 # --- OpenAI 모델 초기화 (InfoCrawler 용) --- 
 if settings.OPENAI_API_KEY:
     # Check if openai.api_key is already set or needs setting
@@ -155,7 +161,7 @@ class InfoCrawler:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                temperature=0.3,
+                **get_temperature_param(settings.LLM_MARKET_TIER_MODEL, 0.3),
                 **get_token_param(settings.LLM_MARKET_TIER_MODEL, 500),
             )
             summary = resp.choices[0].message.content.strip()
