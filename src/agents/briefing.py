@@ -83,13 +83,12 @@ class BriefingAgent:
                 {"role": "system", "content": "You are an expert assistant that writes concise daily trading summary reports in Korean based on execution logs."}, # System prompt
                 {"role": "user", "content": prompt}
             ]
-            # Azure OpenAI 전역 설정
-        openai.api_type = "azure"
-        openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-        openai.api_version = settings.AZURE_OPENAI_API_VERSION
-        openai.api_key = settings.AZURE_OPENAI_API_KEY
-        # 클라이언트는 api_key만 전달
-        client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+            openai.api_type = "azure"
+            openai.api_base = settings.AZURE_OPENAI_ENDPOINT
+            openai.api_version = settings.AZURE_OPENAI_API_VERSION
+            openai.api_key = settings.AZURE_OPENAI_API_KEY
+            # 클라이언트는 api_key만 전달
+            client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
  # Create client
             resp = client.chat.completions.create(
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
