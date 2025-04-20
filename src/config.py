@@ -57,9 +57,9 @@ class Settings(BaseSettings):
     FINNHUB_API_KEY: str
     SERPAPI_API_KEY: str | None = None
 
-    # Azure AI Foundry: Bing Grounding 설정
-    PROJECT_CONNECTION_STRING: str  # AIProjectClient 연결 문자열
-    BING_CONNECTION_NAME: str       # Azure AI Foundry에 등록된 Bing 연결 이름
+    # (Deprecated) Azure AI Foundry 설정 — ARM 환경에서는 사용하지 않음
+    PROJECT_CONNECTION_STRING: str | None = None
+    BING_CONNECTION_NAME: str | None = None
 
     # Azure OpenAI 설정
     AZURE_OPENAI_API_KEY: str
