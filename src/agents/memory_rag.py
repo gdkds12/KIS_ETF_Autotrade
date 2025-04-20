@@ -45,8 +45,12 @@ else:
 # --- LLM 요약 함수 (Now using OpenAI) --- 
 def summarize_text(text: str, topic: str = None) -> str:
     """LLM을 사용하여 텍스트 요약하기"""
-    from openai import OpenAI
-    client = OpenAI(api_key=settings.OPENAI_API_KEY)
+    from openai import AzureOpenAI
+    client = AzureOpenAI(
+        api_key=settings.AZURE_OPENAI_API_KEY,
+        azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+        api_version=settings.AZURE_OPENAI_API_VERSION,
+    )
     
     system_prompt = (
         "당신은 텍스트 요약 전문가입니다. 다음 텍스트를 명확하고 간결하게 요약해주세요.\n"

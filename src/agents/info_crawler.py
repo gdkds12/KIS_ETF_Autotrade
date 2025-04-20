@@ -1,11 +1,8 @@
 # 시장 이슈 수집·요약 
-import logging
-import os
-from azure.identity import DefaultAzureCredential
-from azure.ai.projects import AIProjectClient
-from azure.ai.projects.models import BingGroundingTool
-import openai
-import time
+import logging, os, time, requests
+from openai import AzureOpenAI
+from src.agents.finnhub_client import FinnhubClient
+from src.config import settings
 from concurrent.futures import ThreadPoolExecutor, as_completed # Import concurrent features
 
 from src.config import settings
@@ -42,45 +39,25 @@ class InfoCrawler:
     """
 
     def __init__(self):
-        # 1) Azure AI Foundry 클라이언트 초기화
-        self.project_client = AIProjectClient.from_connection_string(
-            credential=DefaultAzureCredential(),
-            conn_str=os.environ["PROJECT_CONNECTION_STRING"]
-        )
-        # 2) Bing Grounding 연결 불러오기
-        bing_conn = self.project_client.connections.get(
-            connection_name=settings.BING_CONNECTION_NAME
-        )
-        # 3) BingGroundingTool 정의 등록 (preview 헤더 포함)
-        bing_tool = BingGroundingTool(connection_id=bing_conn.id)
-        self.bing_agent = self.project_client.agents.create_agent(
-            model=os.getenv("MODEL_DEPLOYMENT_NAME", settings.LLM_MAIN_TIER_MODEL),
-            name="bing-grounded-info-crawler",
-            instructions="You are an info crawler using Bing Grounding.",
-            tools=bing_tool.definitions,
-            headers={"x-ms-enable-preview": "true"}
-        )
-
-        logger.info("InfoCrawler initialized (Azure AI Foundry).")
+        # Finnhub + Google Custom Search 기반으로 재구성
+        self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
+        logger.info("InfoCrawler initialized (Google CSE + Finnhub).")
 
     # New method to search news using Bing Grounding
-    def search_news(self, query: str = None, category: str = 'general') -> list[dict]:
-        """Azure Bing Grounding을 이용한 최신 뉴스 검색"""
-        # 1) 스레드 생성 → 2) 사용자 메시지 전송 → 3) Bing 에이전트 실행
-        thread = self.project_client.agents.create_thread(assistant_id=self.bing_agent.id)
-        self.project_client.agents.create_message(
-            thread_id=thread.id, role="user",
-            content=query or category
-        )
-        run = self.project_client.agents.create_and_process_run(
-            thread_id=thread.id, assistant_id=self.bing_agent.id
-        )
-        # 4) 반환된 run의 메시지에서 어시스턴트 응답만 추출
-        msgs = self.project_client.agents.list_messages(thread_id=thread.id).data
-        return [
-            m.content[-1].text.value
-            for m in msgs if m.role == "assistant" and m.content
-        ]
+    def search_news(self, query: str = None, category: str = "general") -> list[dict]:
+        """
+        Finnhub API를 이용한 최신 뉴스 검색.
+        - `query` 가 주어지면 결과를 제목/요약에 포함된 키워드 기준으로 필터링한다.
+        """
+        try:
+            raw = self.finnhub.client.general_news(category=category)[:50]
+            if query:
+                q = query.lower()
+                raw = [n for n in raw if q in n.get("headline", "").lower() or q in n.get("summary", "").lower()]
+            return raw[:20]
+        except Exception as e:
+            logger.error(f"Finnhub news search error: {e}", exc_info=True)
+            return []
 
     # except, return [] 블록 제거 및 들여쓰기 정상화
 

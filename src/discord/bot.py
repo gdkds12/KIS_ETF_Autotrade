@@ -10,7 +10,7 @@ import logging
 import asyncio
 from datetime import datetime, timedelta, timezone
 import uuid
-from openai import OpenAI, AsyncOpenAI, APIError, RateLimitError # OpenAI Library
+from openai import AsyncAzureOpenAI, APIError, RateLimitError # OpenAI Library
 import json # For order parsing
 import os
 from enum import Enum, auto
@@ -50,17 +50,15 @@ INTENTS.members = True # Optional, if member info is needed
 
 # --- OpenAI Client --- 
 openai_client = None
-if settings.OPENAI_API_KEY:
-    openai.api_type = "azure"
-    openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-    openai.api_version = settings.AZURE_OPENAI_API_VERSION
-    openai.api_key = settings.AZURE_OPENAI_API_KEY
-    logger.info("Configured OpenAI SDK for Azure.")
-    # AsyncOpenAI는 모듈 레벨 설정(openai.api_type, api_base, api_version)을 사용합니다
-    openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+if settings.AZURE_OPENAI_API_KEY:
+    openai_client = AsyncAzureOpenAI(
+        api_key=settings.AZURE_OPENAI_API_KEY,
+        azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+        api_version=settings.AZURE_OPENAI_API_VERSION,
+    )
     logger.info("OpenAI client initialized.")
 else:
-    logger.warning("OPENAI_API_KEY not set. OpenAI features will be disabled.")
+    logger.warning("AZURE_OPENAI_API_KEY not set. OpenAI features will be disabled.")
 
 # --- Constants & Enums ---
 # Channel ID where order confirmations should be sent (Loaded from settings)

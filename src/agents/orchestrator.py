@@ -3,7 +3,7 @@
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-import openai # Import OpenAI
+from openai import AzureOpenAI # Import OpenAI
 import json # For parsing LLM response
 import uuid
 from datetime import datetime
@@ -118,10 +118,12 @@ class Orchestrator:
         self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
 
         # Initialize OpenAI API Key
-        if settings.OPENAI_API_KEY:
-            # Setting openai.api_key globally, consider client instance if needed
-            if not getattr(openai, 'api_key', None):
-                openai.api_key = settings.OPENAI_API_KEY
+        if settings.AZURE_OPENAI_API_KEY:
+            self.openai_client = AzureOpenAI(
+                api_key=settings.AZURE_OPENAI_API_KEY,
+                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+                api_version=settings.AZURE_OPENAI_API_VERSION,
+            )
             self.llm_model_name = settings.LLM_MAIN_TIER_MODEL  # Store model name
             logger.info(f"Orchestrator will use OpenAI model: {self.llm_model_name}")
         else:
@@ -292,7 +294,7 @@ class Orchestrator:
                 {"role": "system", "content": "You are an AI assistant that generates JSON action plans for an ETF autotrading system based on provided market context and portfolio data."}, # System prompt
                 {"role": "user", "content": prompt}
             ]
-            client = openai.OpenAI(api_key=settings.OPENAI_API_KEY) # Create client
+            client = self.openai_client # Create client
             resp = client.chat.completions.create(
                 model=self.llm_model_name, # Use stored model name
                 messages=messages,
