@@ -3,7 +3,7 @@
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
-from openai import AzureOpenAI # Import OpenAI
+from openai import OpenAI # Import OpenAI
 import json # For parsing LLM response
 import uuid
 from datetime import datetime
@@ -119,9 +119,10 @@ class Orchestrator:
 
         # Initialize OpenAI API Key
         if settings.AZURE_OPENAI_API_KEY:
-            self.openai_client = AzureOpenAI(
+            self.openai_client = OpenAI(
                 api_key=settings.AZURE_OPENAI_API_KEY,
-                azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+                api_type="azure",
+                api_base=settings.AZURE_OPENAI_ENDPOINT,
                 api_version=settings.AZURE_OPENAI_API_VERSION,
             )
             self.llm_model_name = settings.LLM_MAIN_TIER_MODEL  # Store model name

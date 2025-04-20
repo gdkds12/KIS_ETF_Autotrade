@@ -1,6 +1,6 @@
 # 시장 이슈 수집·요약 
 import logging, os, time, requests
-from openai import AzureOpenAI
+from openai import OpenAI
 from src.agents.finnhub_client import FinnhubClient
 from src.config import settings
 from concurrent.futures import ThreadPoolExecutor, as_completed # Import concurrent features
@@ -94,10 +94,10 @@ class InfoCrawler:
             # OpenAI에 직접 요약 요청
             from openai import OpenAI
             client = OpenAI(
-                api_key=settings.AZURE_OPENAI_API_KEY,
-                api_base=settings.AZURE_OPENAI_ENDPOINT,
+                api_key=settings.OPENAI_API_KEY,
                 api_type="azure",
-                api_version=settings.AZURE_OPENAI_API_VERSION,
+                api_base=settings.OPENAI_ENDPOINT,
+                api_version=settings.OPENAI_API_VERSION,
             )
             
             system_prompt = (

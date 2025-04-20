@@ -3,7 +3,7 @@
 import logging
 from datetime import datetime
 from src.config import settings # Import settings for LLM config
-from openai import AzureOpenAI # Import OpenAI
+from openai import OpenAI # Import OpenAI
 import json # To potentially parse complex details if needed
 
 logger = logging.getLogger(__name__)
@@ -79,9 +79,10 @@ class BriefingAgent:
                 {"role": "system", "content": "You are an expert assistant that writes concise daily trading summary reports in Korean based on execution logs."}, # System prompt
                 {"role": "user", "content": prompt}
             ]
-            client = AzureOpenAI(
+            client = OpenAI(
             api_key=settings.AZURE_OPENAI_API_KEY,
-            azure_endpoint=settings.AZURE_OPENAI_ENDPOINT,
+            api_type="azure",
+            api_base=settings.AZURE_OPENAI_ENDPOINT,
             api_version=settings.AZURE_OPENAI_API_VERSION,
         ) # Create client
             resp = client.chat.completions.create(
