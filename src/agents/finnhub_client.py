@@ -4,7 +4,7 @@ Finnhub API 클라이언트 모듈
 
 이 모듈은 Finnhub API와의 상호작용을 위한 클라이언트 클래스를 제공합니다.
 """
-import finnhub
+import tavily
 import os
 import logging
 from typing import List, Dict, Any
@@ -12,30 +12,28 @@ from typing import List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-class FinnhubClientError(Exception):
-    """Custom exception for FinnhubClient errors."""
+class TavilyClientError(Exception):
+    """Custom exception for TavilyClient errors."""
     pass
 
-class FinnhubClient:
+class TavilyClient:
     def __init__(self, token: str):
-        """Initializes the Finnhub client using the provided API token."""
+        """Initializes the Tavily client using the provided API token."""
         if not token:
-            logger.error("Finnhub API token is missing.")
-            raise ValueError("Finnhub API token is required.")
+            logger.error("Tavily API token is missing.")
+            raise ValueError("Tavily API token is required.")
             
         try:
-            # Finnhub 파이썬 SDK: Client(api_key=...) 사용
-            self.client = finnhub.Client(api_key=token)
-            logger.info("Finnhub client initialized successfully.")
+            self.client = tavily.Client(api_key=token)
+            logger.info("Tavily client initialized successfully.")
         except Exception as e:
-             logger.error(f"Failed to initialize Finnhub client: {e}", exc_info=True)
-             raise FinnhubClientError(f"Finnhub client initialization failed: {e}")
+             logger.error(f"Failed to initialize Tavily client: {e}", exc_info=True)
+             raise TavilyClientError(f"Tavily client initialization failed: {e}")
 
     def get_quote(self, symbol: str):
         """Fetches the real-time quote for a given stock symbol."""
         logger.debug(f"Fetching quote for symbol: {symbol}")
         try:
-            # Use the client directly
             quote_data = self.client.quote(symbol)
             logger.debug(f"Received quote for {symbol}: {quote_data}")
             return quote_data

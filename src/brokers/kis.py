@@ -189,14 +189,35 @@ class KisBroker:
             logger.error(f"Unexpected error during KIS API request ({path}, TR:{headers['tr_id']}): {e}", exc_info=True)
             raise KisBrokerError(f"Unexpected error during KIS API request: {e}") from e
 
+    def is_overseas_symbol(self, symbol: str) -> bool:
+        """심볼이 영문 대문자(3~5자) 또는 .O 등으로 끝나면 해외주식으로 간주 (간단 heuristic)"""
+        import re
+        # 예: SPY, AAPL, TSLA, MSFT, QQQ, NVDA, etc. (4~5자 영문 대문자)
+        # 또는 .O, .N, .A 등 해외 심볼 접미사
+        if re.fullmatch(r'[A-Z]{3,5}', symbol):
+            return True
+        if re.search(r'\.[A-Z]$', symbol):
+            return True
+        return False
+
     def get_quote(self, symbol: str) -> dict:
-        """주식 현재가 시세(체결)를 조회합니다."""
-        path = "/uapi/domestic-stock/v1/quotations/inquire-price"
-        tr_id = self._compute_tr_id("get_quote") # Use computed TR ID
-        params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}
+        """주식 현재가 시세(체결)를 조회합니다. 국내/해외 구분"""
+        # Check if the symbol is for an overseas stock
+        is_overseas = self.is_overseas_symbol(symbol)
         try:
+            if is_overseas:
+                # 해외 주식 API 호출 (예: SPY)
+                path = "/uapi/overseas-price/v1/quotations/price"
+                tr_id = "HHDFS00000300"  # 해외 주식 시세 조회용 TR ID
+                params = {"EXCD": "NAS", "SYMB": symbol}  # NAS: NASDAQ 거래소, SPY는 NASDAQ 상장
+            else:
+                # 국내 주식 API 호출
+                path = "/uapi/domestic-stock/v1/quotations/inquire-price"
+                tr_id = self._compute_tr_id("get_quote")  # 국내 주식용 TR ID
+                params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": symbol}  # 국내 주식
             response_data = self._request("GET", path, tr_id, params=params)
-            return response_data.get("output", {})
+            # 해외 주식은 output이 다를 수 있으므로 그대로 반환
+            return response_data.get("output", response_data)
         except KisBrokerError as e:
             logger.error(f"Failed to get quote for {symbol}: {e}")
             raise e

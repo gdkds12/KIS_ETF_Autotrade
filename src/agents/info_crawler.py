@@ -3,7 +3,7 @@ import logging
 import requests # Use requests library directly
 from requests.exceptions import RequestException
 import openai # Keep OpenAI for summarization
-import finnhub # Remove finnhub client import
+import tavily  # Tavily 클라이언트로 변경
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed # Import concurrent features
 
@@ -41,10 +41,10 @@ class InfoCrawler:
     """
 
     def __init__(self):
-        """InfoCrawler 초기화 (Finnhub + Web Search)"""
-        # Finnhub 설정
-        self.api_key = settings.FINNHUB_API_KEY # Keep using this name for finnhub
-        self.base_url = "https://finnhub.io/api/v1" # Finnhub API base URL
+        """InfoCrawler 초기화 (Tavily + Web Search)"""
+        # Tavily 설정
+        self.api_key = settings.TAVILY_API_KEY  # Tavily API 키로 변경
+        self.tavily_client = tavily.Client(api_key=settings.TAVILY_API_KEY)  # Tavily 클라이언트 초기화
         
         # SerpAPI 설정 (일반 웹 검색용)
         if not settings.SERPAPI_API_KEY:
@@ -57,53 +57,23 @@ class InfoCrawler:
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'AutotradeETFB/1.0'})
         
-        # Remove fh_client attribute
-        # self.fh_client = finnhub.Client(api_key=settings.FINNHUB_API_KEY)
-        
-        # Keep LLM model reference if needed by _summarize_with_llm implementation
-        # (Current _summarize_with_llm uses global openai key, so no instance needed here)
-        # self.llm_model = info_llm_model 
-        
-        logger.info("InfoCrawler initialized (Finnhub + Web Search).")
+        logger.info("InfoCrawler initialized (Tavily + Web Search).")
 
     # Remove old _fetch_raw_data
     # def _fetch_raw_data(...)
 
-    # New method to search news using requests
+    # New method to search news using Tavily client
     def search_news(self, query: str = None, category: str = 'general') -> list[dict]:
-        """Finnhub API 로 최신 뉴스 검색 (requests 사용)"""
+        """Tavily API로 최신 뉴스 검색 (Tavily 클라이언트 사용)"""
         if not self.api_key:
-            logger.warning("Finnhub API key not set. Cannot search news.")
+            logger.warning("Tavily API key not set. Cannot search news.")
             return []
-            
-        url = f"{self.base_url}/news"
-        params = {"token": self.api_key, "category": category}
-        # Finnhub /news endpoint doesn't directly support query text search,
-        # but we can fetch general news or potentially company news if query is a symbol.
-        # For simplicity, we'll stick to category for now.
-        # If query IS a symbol, Finnhub has /company-news
-        # if query and category is None: # Example: If query is likely a symbol
-        #    url = f"{self.base_url}/company-news"
-        #    params = {"symbol": query.upper(), "token": self.api_key, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD"}
-        
-        logger.info(f"Searching Finnhub news (category: {category})...")
         try:
-            resp = self.session.get(url, params=params, timeout=10)
-            resp.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
-            news_list = resp.json()
-            # Ensure it's a list before slicing
-            if isinstance(news_list, list):
-                 logger.info(f"Fetched {len(news_list)} news articles from Finnhub.")
-                 return news_list
-            else:
-                 logger.error(f"Unexpected response format from Finnhub news API: {news_list}")
-                 return []
-        except RequestException as e:
-             logger.error(f"Finnhub news request failed: {e}", exc_info=True)
-             return []
+            news_list = self.tavily_client.search(query=query, category=category)  # Tavily 검색 호출
+            return news_list
         except Exception as e:
-             logger.error(f"Error processing Finnhub news response: {e}", exc_info=True)
-             return []
+            logger.error(f"Tavily API error during news search: {e}", exc_info=True)
+            return []
 
     # New method to search symbols using requests
     def search_symbols(self, query: str) -> list[dict]:
