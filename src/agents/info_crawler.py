@@ -69,6 +69,8 @@ class InfoCrawler:
             return []
         try:
             news_list = self.tavily_client.search(query=query, category=category)
+            if isinstance(news_list, dict):
+                news_list = [news_list]
             return news_list
         except Exception as e:
             logger.error(f"Tavily API error during news search: {e}", exc_info=True)
@@ -141,6 +143,11 @@ class InfoCrawler:
             logger.info("Searching general news as no specific query provided.")
             news_list = self.search_news(category='general')
         
+        # Normalize news_list to a list to avoid slicing on non-list types
+        if isinstance(news_list, dict):
+            news_list = [news_list]
+        elif not isinstance(news_list, list):
+            news_list = []
         if not news_list:
             logger.warning("No news fetched from Finnhub for market summary.")
             return "(최신 시장 뉴스를 가져올 수 없습니다.)"
