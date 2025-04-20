@@ -16,7 +16,21 @@ class TavilyClientError(Exception):
     """Custom exception for TavilyClient errors."""
     pass
 
-class TavilyClient:
+import finnhub
+
+class FinnhubClient:
+    def __init__(self, token: str):
+        if not token:
+            raise ValueError("Finnhub API token is required.")
+        self.client = finnhub.Client(api_key=token)
+
+    def search(self, query: str):
+        # 심볼/회사 검색
+        try:
+            return self.client.symbol_search(query)
+        except Exception as e:
+            raise RuntimeError(f"Finnhub symbol search failed: {e}")
+
     def __init__(self, token: str):
         """Initializes the Tavily client using the provided API token."""
         if not token:

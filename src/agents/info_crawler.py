@@ -41,10 +41,12 @@ class InfoCrawler:
     """
 
     def __init__(self):
-        """InfoCrawler 초기화 (Tavily + Web Search)"""
-        # Tavily 설정
-        self.api_key = settings.TAVILY_API_KEY  # Tavily API 키로 변경
-        self.tavily_client = tavily.Client(api_key=settings.TAVILY_API_KEY)  # Tavily 클라이언트 초기화
+        """InfoCrawler 초기화 (Finnhub + Tavily + Web Search)"""
+        from src.agents.finnhub_client import FinnhubClient
+        # Finnhub 설정 (심볼 검색)
+        self.finnhub_client = FinnhubClient(settings.FINNHUB_API_KEY)
+        # Tavily 설정 (뉴스 검색)
+        self.tavily_client = tavily.Client(api_key=settings.TAVILY_API_KEY)
         
         # SerpAPI 설정 (일반 웹 검색용)
         if not settings.SERPAPI_API_KEY:
@@ -54,10 +56,7 @@ class InfoCrawler:
             self.serpapi_key = settings.SERPAPI_API_KEY
         self.serpapi_url = "https://serpapi.com/search"
         
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'AutotradeETFB/1.0'})
-        
-        logger.info("InfoCrawler initialized (Tavily + Web Search).")
+        logger.info("InfoCrawler initialized (Finnhub + Tavily + Web Search).")
 
     # Remove old _fetch_raw_data
     # def _fetch_raw_data(...)
@@ -65,11 +64,11 @@ class InfoCrawler:
     # New method to search news using Tavily client
     def search_news(self, query: str = None, category: str = 'general') -> list[dict]:
         """Tavily API로 최신 뉴스 검색 (Tavily 클라이언트 사용)"""
-        if not self.api_key:
-            logger.warning("Tavily API key not set. Cannot search news.")
+        if not self.tavily_client:
+            logger.warning("Tavily client not initialized. Cannot search news.")
             return []
         try:
-            news_list = self.tavily_client.search(query=query, category=category)  # Tavily 검색 호출
+            news_list = self.tavily_client.search(query=query, category=category)
             return news_list
         except Exception as e:
             logger.error(f"Tavily API error during news search: {e}", exc_info=True)
@@ -77,30 +76,15 @@ class InfoCrawler:
 
     # New method to search symbols using requests
     def search_symbols(self, query: str) -> list[dict]:
-        """Finnhub API 로 종목/회사 검색 (requests 사용)"""
-        if not self.api_key:
-            logger.warning("Finnhub API key not set. Cannot search symbols.")
-            return []
+        """Finnhub API로 종목/회사 검색"""
         if not query:
             logger.warning("Empty query for symbol search.")
             return []
-            
-        url = f"{self.base_url}/search"
-        params = {"q": query, "token": self.api_key}
-        logger.info(f"Searching Finnhub symbols for query: '{query}'...")
         try:
-            resp = self.session.get(url, params=params, timeout=10)
-            resp.raise_for_status()
-            data = resp.json()
-            results = data.get("result", [])
-            logger.info(f"Found {len(results)} symbol matches for query '{query}'.")
-            return results
-        except RequestException as e:
-             logger.error(f"Finnhub symbol search request failed: {e}", exc_info=True)
-             return []
+            return self.finnhub_client.search(query)
         except Exception as e:
-             logger.error(f"Error processing Finnhub symbol search response: {e}", exc_info=True)
-             return []
+            logger.error(f"Finnhub symbol search failed: {e}", exc_info=True)
+            return []
              
     def _summarize_with_llm(self, snippets, query):
         """LLM을 사용하여 수집된 스니펫을 요약합니다."""
