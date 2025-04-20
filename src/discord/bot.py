@@ -1,5 +1,8 @@
 # Slash 명령·세션 관리자 
 
+# Module import for Azure‑mode OpenAI client configuration
+import openai
+
 import discord
 from discord import app_commands, Interaction, ButtonStyle, Embed, ui, Message, Thread
 from discord.ext import commands
