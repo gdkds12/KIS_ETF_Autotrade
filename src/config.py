@@ -22,8 +22,8 @@ class Settings(BaseSettings):
     # 모의투자 계좌 사용 여부 (환경 변수 KIS_VIRTUAL_ACCOUNT=true/false 로 설정 가능)
     KIS_VIRTUAL_ACCOUNT: bool = True
 
-    # Tavily API Key
-    TAVILY_API_KEY: str
+    # Bing Search API Key
+    BING_API_KEY: str
 
     # Discord Bot Configuration
     DISCORD_TOKEN: str
@@ -48,11 +48,21 @@ class Settings(BaseSettings):
     QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION_NAME: str = "kis_etf_memory"
 
-    # --- LLM Configuration --- 
-    OPENAI_API_KEY: str # Make it required
-    # GOOGLE_API_KEY: str | None = None # Remove Google API key
-    FINNHUB_API_KEY: str # Make Finnhub API Key required
-    SERPAPI_API_KEY: str | None = None # Optional: SerpAPI Key for web search
+    # LLM Configuration
+    OPENAI_API_KEY: str
+    FINNHUB_API_KEY: str
+    SERPAPI_API_KEY: str | None = None
+
+    # Azure AI Foundry: Bing Grounding 설정
+    PROJECT_CONNECTION_STRING: str  # AIProjectClient 연결 문자열
+    BING_CONNECTION_NAME: str       # Azure AI Foundry에 등록된 Bing 연결 이름
+
+    # Azure OpenAI 설정
+    AZURE_OPENAI_API_KEY: str
+    AZURE_OPENAI_ENDPOINT: str
+    AZURE_OPENAI_API_VERSION: str
+    AZURE_OPENAI_DEPLOYMENT_GPT4: str
+    AZURE_OPENAI_DEPLOYMENT_GPT35: str
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
     # Using gpt-4o-mini as a placeholder for the non-existent gpt-4.1-nano

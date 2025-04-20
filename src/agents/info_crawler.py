@@ -1,9 +1,10 @@
 # 시장 이슈 수집·요약 
 import logging
-import requests # Use requests library directly
-from requests.exceptions import RequestException
-import openai # Keep OpenAI for summarization
-import tavily  # Tavily 클라이언트로 변경
+import os
+from azure.identity import DefaultAzureCredential
+from azure.ai.projects import AIProjectClient
+from azure.ai.projects.models import BingGroundingTool
+import openai
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed # Import concurrent features
 
@@ -41,44 +42,68 @@ class InfoCrawler:
     """
 
     def __init__(self):
-        """InfoCrawler 초기화 (Finnhub + Tavily + Web Search)"""
-        from src.agents.finnhub_client import FinnhubClient
-        # Finnhub 설정 (심볼 검색)
-        self.finnhub_client = FinnhubClient(settings.FINNHUB_API_KEY)
-        # Tavily 설정 (뉴스 검색)
-        self.tavily_client = tavily.Client(settings.TAVILY_API_KEY)
-        
-        logger.info("InfoCrawler initialized (Finnhub + Tavily).")
+        # 1) Azure AI Foundry 클라이언트 초기화
+        self.project_client = AIProjectClient.from_connection_string(
+            credential=DefaultAzureCredential(),
+            conn_str=os.environ["PROJECT_CONNECTION_STRING"]
+        )
+        # 2) Bing Grounding 연결 불러오기
+        bing_conn = self.project_client.connections.get(
+            connection_name=settings.BING_CONNECTION_NAME
+        )
+        # 3) BingGroundingTool 정의 등록 (preview 헤더 포함)
+        bing_tool = BingGroundingTool(connection_id=bing_conn.id)
+        self.bing_agent = self.project_client.agents.create_agent(
+            model=os.getenv("MODEL_DEPLOYMENT_NAME", settings.LLM_MAIN_TIER_MODEL),
+            name="bing-grounded-info-crawler",
+            instructions="You are an info crawler using Bing Grounding.",
+            tools=bing_tool.definitions,
+            headers={"x-ms-enable-preview": "true"}
+        )
 
-    # Remove old _fetch_raw_data
-    # def _fetch_raw_data(...)
+        logger.info("InfoCrawler initialized (Azure AI Foundry).")
 
-    # New method to search news using Tavily client
+    # New method to search news using Bing Grounding
     def search_news(self, query: str = None, category: str = 'general') -> list[dict]:
-        """Tavily API로 최신 뉴스 검색 (Tavily 클라이언트 사용)"""
-        if not self.tavily_client:
-            logger.warning("Tavily client not initialized. Cannot search news.")
-            return []
-        try:
-            news_list = self.tavily_client.search(query=query, category=category)
-            if isinstance(news_list, dict):
-                news_list = [news_list]
+        """Azure Bing Grounding을 이용한 최신 뉴스 검색"""
+        # 1) 스레드 생성 → 2) 사용자 메시지 전송 → 3) Bing 에이전트 실행
+        thread = self.project_client.agents.create_thread(assistant_id=self.bing_agent.id)
+        self.project_client.agents.create_message(
+            thread_id=thread.id, role="user",
+            content=query or category
+        )
+        run = self.project_client.agents.create_and_process_run(
+            thread_id=thread.id, assistant_id=self.bing_agent.id
+        )
+        # 4) 반환된 run의 메시지에서 어시스턴트 응답만 추출
+        msgs = self.project_client.agents.list_messages(thread_id=thread.id).data
+        return [
+            m.content[-1].text.value
+            for m in msgs if m.role == "assistant" and m.content
+        ]
             return news_list
         except Exception as e:
             logger.error(f"Tavily API error during news search: {e}", exc_info=True)
             return []
 
     # New method to search symbols using requests
-    def search_symbols(self, query: str) -> list[dict]:
-        """Finnhub API로 종목/회사 검색"""
+    def search_web(self, query: str) -> list[dict]:
+        """Azure Bing Grounding을 이용한 일반 웹 검색"""
         if not query:
             logger.warning("Empty query for symbol search.")
             return []
-        try:
-            return self.finnhub_client.search(query)
-        except Exception as e:
-            logger.error(f"Finnhub symbol search failed: {e}", exc_info=True)
-            return []
+        thread = self.project_client.agents.create_thread(assistant_id=self.bing_agent.id)
+        self.project_client.agents.create_message(
+            thread_id=thread.id, role="user", content=query
+        )
+        run = self.project_client.agents.create_and_process_run(
+            thread_id=thread.id, assistant_id=self.bing_agent.id
+        )
+        msgs = self.project_client.agents.list_messages(thread_id=thread.id).data
+        return [
+            m.content[-1].text.value
+            for m in msgs if m.role == "assistant" and m.content
+        ]
              
     def _summarize_with_llm(self, snippets, query):
         """LLM을 사용하여 수집된 스니펫을 요약합니다."""
@@ -91,7 +116,12 @@ class InfoCrawler:
         try:
             # OpenAI에 직접 요약 요청
             from openai import OpenAI
-            client = OpenAI(api_key=settings.OPENAI_API_KEY)
+            client = OpenAI(
+                api_key=settings.AZURE_OPENAI_API_KEY,
+                api_base=settings.AZURE_OPENAI_ENDPOINT,
+                api_type="azure",
+                api_version=settings.AZURE_OPENAI_API_VERSION,
+            )
             
             system_prompt = (
                 "당신은 수집된 정보를 명확하고 간결하게 요약하는 전문가입니다. "

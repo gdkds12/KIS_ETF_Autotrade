@@ -48,7 +48,17 @@ INTENTS.members = True # Optional, if member info is needed
 # --- OpenAI Client --- 
 openai_client = None
 if settings.OPENAI_API_KEY:
-    openai_client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
+    openai.api_type = "azure"
+    openai.api_base = settings.AZURE_OPENAI_ENDPOINT
+    openai.api_version = settings.AZURE_OPENAI_API_VERSION
+    openai.api_key = settings.AZURE_OPENAI_API_KEY
+    logger.info("Configured OpenAI SDK for Azure.")
+    openai_client = AsyncOpenAI(
+        api_key=settings.OPENAI_API_KEY,
+        api_type="azure",
+        api_base=settings.AZURE_OPENAI_ENDPOINT,
+        api_version=settings.AZURE_OPENAI_API_VERSION
+    )
     logger.info("OpenAI client initialized.")
 else:
     logger.warning("OPENAI_API_KEY not set. OpenAI features will be disabled.")
@@ -231,13 +241,24 @@ class TradingBot(commands.Bot):
         message_history.append({"role": "user", "content": user_message})
         
         system_prompt = (
-            "당신은 금융 도우미 AI입니다. 사용자 질문 의도에 따라 적합한 내부 명령을 호출해 실시간 데이터나 정보를 가져오세요:\\n"
-            "- get_balance() → 계좌 잔고 조회\\n"
-            "- get_positions() → 보유 포지션 조회\\n"
-            "- get_historical_data(symbol, timeframe, start_date, end_date, period) → 과거 시세(일·주·월봉)\\n"
-            "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → 현금 주문 실행\\n"
-            "- get_quote(symbol) → 국내 주식 실시간 시세 조회\\n"
-            "- get_overseas_trading_status() → 해외 주식 거래 가능 여부 조회\\n"
+            " . .\n"
+            "- search_web(query)       → (Bing Search v7)\n"
+            "- get_balance() → \n"
+            "- get_positions() → \n"
+            "- get_historical_data(symbol, timeframe, start_date, end_date, period) → (, , )\n"
+            "- order_cash(symbol, quantity, price, order_type, buy_sell_code) → \n"
+            "- get_quote(symbol) → \n"
+            "- get_overseas_trading_status() → \n"
+            "- get_market_summary(query) → Finnhub (ETF, )\n"
+            "- search_news(query) → Finnhub API (, )\n"
+            "- multi_search(query, attempts) → query3 (news/web )\n"
+            "— ' ', ' ', ' ' ,  .\n"
+            "— , .\n"
+            " .\n"
+            "\n※  ' ' .\n"
+            "모든 답변은 .\n"
+            "\n※  ' ' .\n"
+            "이 데이터를 바탕으로 사용자 요청에 답변해 주세요."
             "- get_market_summary(query) → Finnhub 기반 시장 동향 요약 (ETF·지수 등 뉴스성 요약)\\n"
             "- search_news(query) → Finnhub API를 이용한 최신 뉴스 리스트 검색 (시장 동향, 기업 이슈 등)\\n"
             "- multi_search(query, attempts) → query를 바탕으로 3번의 news/web 검색을 병렬 수행해 종합 요약\\n"
