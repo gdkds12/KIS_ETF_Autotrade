@@ -17,8 +17,8 @@
     # Install system dependencies that might be required by some Python packages
     # (e.g., build-essential for C extensions, libpq-dev for psycopg2)
     RUN apt-get update && \
-        apt-get install -y --no-install-recommends build-essential libpq-dev curl && \
-        apt-get clean && rm -rf /var/lib/apt/lists/*
+        apt-get install -y --no-install-recommends build-essential libpq-dev curl git && \
+        apt-get clean && rm -rf /var/lib/apt/lists/*  # git 추가
     
     # Copy only the requirements file first to leverage Docker cache
     COPY requirements.lock ./
