@@ -25,7 +25,11 @@ def get_temperature_param(model: str, temperature: float) -> dict:
 # --- OpenAI 모델 초기화 (BriefingAgent 용) ---
 # Rely on global setting of openai.api_key done elsewhere
 if settings.OPENAI_API_KEY:
-    # openai.api_key = settings.OPENAI_API_KEY # Avoid setting globally multiple times
+    # Configure Azure-flavored OpenAI SDK
+    openai.api_type = "azure"
+    openai.api_base = settings.AZURE_OPENAI_ENDPOINT
+    openai.api_version = settings.AZURE_OPENAI_API_VERSION
+    openai.api_key = settings.OPENAI_API_KEY
     logger.info(f"BriefingAgent will use OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
 else:
     logger.warning("OPENAI_API_KEY not set. Briefing will be basic.")
@@ -33,7 +37,6 @@ else:
 class BriefingAgent:
     def __init__(self):
         # LLM client setup is handled globally
-        # self.llm_model = briefing_llm_model # Remove Gemini model reference
         logger.info("BriefingAgent initialized.")
 
     def _generate_llm_summary(self, execution_results: list) -> str:
