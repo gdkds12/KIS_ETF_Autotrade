@@ -273,29 +273,7 @@ class InfoCrawler:
             "snippets_count": len(snippets)
         }
 
-    def search_web(self, query: str, num_results: int = 5) -> list[dict]:
-        """
-        Tavily API를 이용해 일반 웹 검색을 수행합니다.
-        - query: 검색어
-        - num_results: 최대 결과 개수
-        반환 형식: [{"title":..., "link":..., "snippet":...}, ...]
-        """
-        # Web search via Tavily API instead of SerpAPI
-        if not self.tavily_client:
-            logger.warning("Tavily client not initialized. Cannot perform web search.")
-            return []
-        try:
-            results = self.tavily_client.search(query=query, category='web')
-            if isinstance(results, dict):
-                results = [results]
-            elif not isinstance(results, list):
-                results = []
-            return results[:num_results]
-        except Exception as e:
-            logger.error(f"Tavily API error during web search: {e}", exc_info=True)
-            return []
-
-# Example Usage
+ # Example Usage
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
