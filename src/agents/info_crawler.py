@@ -67,7 +67,10 @@ class InfoCrawler:
         }
         try:
             resp = requests.get(url, params=params, timeout=10)
-            resp.raise_for_status()
+            # Handle non-200 responses (e.g., 403 Forbidden) gracefully
+            if resp.status_code != 200:
+                logger.warning(f"Google Custom Search returned {resp.status_code} for query '{query}'. Skipping web search.")
+                return []
             data = resp.json()
             items = data.get("items", [])
             results = []
@@ -186,7 +189,7 @@ class InfoCrawler:
         """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
         logger.info(f"Performing multi-search for query: '{query}' with {attempts} attempts (max {max_attempts})")
         # 1) 시도 횟수 보정 (사용자 지정 attempts 반영, 1~max_attempts 범위)
-        tries = max(1, min(attempts, max_attempts))
+        tries = 1  # 임시: 한번만 검색 수행
 
         # 2) 키워드 확장용 suffix 리스트 (attempts에 맞춰 다양한 suffix 사용)
         suffixes = [
