@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     # Slack Webhook URL (for alerts)
     SLACK_WEBHOOK: str | None = None # Optional
 
+    # Google Custom Search API
+    GOOGLE_API_KEY: str
+    GOOGLE_CX: str  # Custom Search Engine ID
+
     # Database Configuration
     DB_USER: str = "user"
     DB_PASSWORD: str = "password"

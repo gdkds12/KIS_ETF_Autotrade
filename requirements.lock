@@ -35,13 +35,10 @@ openai>=1.17.0
 
 # 필요한 패키지 목록 
 
-# Azure OpenAI 및 Bing Grounding(Foundry) 관련 패키지
-# Azure Foundry(Bing Grounding) 기능을 사용하려면 아래 패키지를 설치하세요
-azure-ai-ml>=1.14.0
-azure-identity>=1.15.0
-# Removed incorrect azure-ai-identity package
-azure-ai-resources>=1.0.0b2
-azure-core>=1.29.0
+# Google Custom Search API 및 필수 패키지
+requests>=2.31.0,<2.32.0
 
 # Azure OpenAI Python SDK (공식)
+azure-core>=1.29.0
+azure-ai-openai>=1.0.0b7
 azure-ai-openai>=1.0.0b7

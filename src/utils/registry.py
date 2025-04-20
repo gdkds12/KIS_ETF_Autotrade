@@ -106,15 +106,15 @@ def search_symbols(query: str) -> list:
     return []
 
 @command
-def search_web(query: str) -> list:
-    """일반 웹 검색 결과를 Azure AI Foundry(Bing Grounding) 기반으로 가져옵니다."""
+def search_web(query: str) -> list[dict]:
+    """Google Custom Search API 기반 일반 웹 검색"""
     if ORCHESTRATOR is None:
         return []
-    # Azure AI Foundry(Bing Grounding) 기반 검색으로 대체
+    # Google Custom Search API 기반 검색으로 대체
     try:
         return ORCHESTRATOR.info_crawler.search_web(query=query)
     except Exception as e:
-        logging.error(f"Foundry-based web search failed: {e}")
+        logging.error(f"Google Custom Search API search failed: {e}")
         return []
 
 @command

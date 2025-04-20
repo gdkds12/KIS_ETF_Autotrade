@@ -85,23 +85,34 @@ class InfoCrawler:
     # except, return [] 블록 제거 및 들여쓰기 정상화
 
     # New method to search symbols using requests
-    def search_web(self, query: str) -> list[dict]:
-        """Azure Bing Grounding을 이용한 일반 웹 검색"""
+    def search_web(self, query: str, num_results: int = 5) -> list[dict]:
+        """Google Custom Search JSON API를 이용한 일반 웹 검색"""
         if not query:
-            logger.warning("Empty query for symbol search.")
+            logger.warning("Empty query for web search.")
             return []
-        thread = self.project_client.agents.create_thread(assistant_id=self.bing_agent.id)
-        self.project_client.agents.create_message(
-            thread_id=thread.id, role="user", content=query
-        )
-        run = self.project_client.agents.create_and_process_run(
-            thread_id=thread.id, assistant_id=self.bing_agent.id
-        )
-        msgs = self.project_client.agents.list_messages(thread_id=thread.id).data
-        return [
-            m.content[-1].text.value
-            for m in msgs if m.role == "assistant" and m.content
-        ]
+        url = "https://www.googleapis.com/customsearch/v1"
+        params = {
+            "key": settings.GOOGLE_API_KEY,
+            "cx": settings.GOOGLE_CX,
+            "q": query,
+            "num": num_results
+        }
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            items = data.get("items", [])
+            results = []
+            for item in items:
+                results.append({
+                    "title": item.get("title"),
+                    "link": item.get("link"),
+                    "snippet": item.get("snippet")
+                })
+            return results
+        except Exception as e:
+            logger.error(f"Google Custom Search error for query '{query}': {e}", exc_info=True)
+            return []
              
     def _summarize_with_llm(self, snippets, query):
         """LLM을 사용하여 수집된 스니펫을 요약합니다."""
