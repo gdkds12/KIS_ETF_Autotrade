@@ -111,14 +111,16 @@ class InfoCrawler:
             
             user_prompt = f"다음 정보를 바탕으로 '{query}'에 대해 요약해주세요:\n\n{combined_text}"
             
+            # Use lightweight tier model for summarization
+            model_name = settings.LLM_LIGHTWEIGHT_TIER_MODEL
             resp = client.chat.completions.create(
-                model=settings.LLM_MARKET_TIER_MODEL,
+                model=model_name,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
                 ],
-                **get_temperature_param(settings.LLM_MARKET_TIER_MODEL, 0.3),
-                **get_token_param(settings.LLM_MARKET_TIER_MODEL, 500),
+                **get_temperature_param(model_name, 0.3),
+                **get_token_param(model_name, 500),
             )
             summary = resp.choices[0].message.content.strip()
             logger.info("Received summary from OpenAI.")
@@ -183,10 +185,10 @@ class InfoCrawler:
         """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
         logger.info(f"Performing multi-search for query: '{query}' with {attempts} attempts (max {max_attempts})")
         # 1) 시도 횟수 보정
-        tries = max(3, min(int(attempts), max_attempts)) # Ensure attempts is int
+        tries = 3 # Fix number of subqueries to 3
 
         # 2) 기본 키워드 확장 리스트 (동적 변형)
-        suffixes = ["최신 뉴스", "시사 동향", "시장 분석", "지표", "최근 변화", "전망", "영향", "관련주"] # Expanded suffixes
+        suffixes = ["최신 뉴스", "시장 동향"] # Reduced suffix list for about 3 total queries
         subqueries_set = {query}
         for s in suffixes:
             subqueries_set.add(f"{query} {s}")
@@ -270,43 +272,24 @@ class InfoCrawler:
 
     def search_web(self, query: str, num_results: int = 5) -> list[dict]:
         """
-        SerpAPI를 이용해 일반 웹 검색을 수행합니다.
+        Tavily API를 이용해 일반 웹 검색을 수행합니다.
         - query: 검색어
         - num_results: 최대 결과 개수
         반환 형식: [{"title":..., "link":..., "snippet":...}, ...]
         """
-        if not self.serpapi_key:
-            logger.error("SERPAPI_API_KEY 가 설정되지 않았습니다. 웹 검색을 수행할 수 없습니다.")
-            return [] # Return empty list as error indicator
-            
-        params = {
-            "q": query,
-            "api_key": self.serpapi_key,
-            "num": num_results,
-            "engine": "google", # Specify search engine (e.g., google, naver)
-            "gl": "kr", # Specify country (e.g., kr for Korea)
-            "hl": "ko" # Specify language (e.g., ko for Korean)
-        }
-        logger.info(f"Performing web search for query: '{query}' using SerpAPI...")
+        # Web search via Tavily API instead of SerpAPI
+        if not self.tavily_client:
+            logger.warning("Tavily client not initialized. Cannot perform web search.")
+            return []
         try:
-            resp = requests.get(self.serpapi_url, params=params, timeout=10)
-            resp.raise_for_status() # Raise HTTPError for bad responses
-            data = resp.json()
-            results = []
-            # Extract relevant fields from organic results
-            for item in data.get("organic_results", [])[:num_results]:
-                results.append({
-                    "title": item.get("title"),
-                    "link": item.get("link"),
-                    "snippet": item.get("snippet") or item.get("displayed_link") # Use displayed_link as fallback
-                })
-            logger.info(f"Web search completed. Found {len(results)} results for '{query}'.")
-            return results
-        except RequestException as e:
-             logger.error(f"SerpAPI web search request failed for '{query}': {e}", exc_info=True)
-             return []
+            results = self.tavily_client.search(query=query, category='web')
+            if isinstance(results, dict):
+                results = [results]
+            elif not isinstance(results, list):
+                results = []
+            return results[:num_results]
         except Exception as e:
-            logger.error(f"Error processing SerpAPI response for '{query}': {e}", exc_info=True)
+            logger.error(f"Tavily API error during web search: {e}", exc_info=True)
             return []
 
 # Example Usage
