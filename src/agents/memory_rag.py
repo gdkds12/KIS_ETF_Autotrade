@@ -18,6 +18,7 @@ from src.config import settings
 from src.db.models import TradingSession, SessionLog # DB 모델 임포트
 # Placeholder for LLM summarization function
 # from some_llm_library import summarize_text
+from src.utils.azure_openai import azure_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -45,15 +46,6 @@ else:
 # --- LLM 요약 함수 (Now using OpenAI) --- 
 def summarize_text(text: str, topic: str = None) -> str:
     """LLM을 사용하여 텍스트 요약하기"""
-    # Azure OpenAI 전역 설정
-    openai.api_type = "azure"
-    openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-    openai.api_version = settings.AZURE_OPENAI_API_VERSION
-    openai.api_key = settings.AZURE_OPENAI_API_KEY
-    # 클라이언트 생성 시에는 api_key만 전달
-    client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
-
-    
     system_prompt = (
         "당신은 텍스트 요약 전문가입니다. 다음 텍스트를 명확하고 간결하게 요약해주세요.\n"
         "요약은 원문의 핵심 정보와 중요한 세부 사항을 보존해야 합니다.\n"
@@ -66,23 +58,20 @@ def summarize_text(text: str, topic: str = None) -> str:
         user_content += f"\n\n이 텍스트는 '{topic}' 주제와 관련이 있습니다."
         
     try:
-        resp = client.chat.completions.create(
-            model=settings.LLM_SUMMARY_TIER_MODEL,
+        resp_json = azure_chat_completion(
+            deployment=settings.LLM_SUMMARY_TIER_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content}
             ],
-            **get_temperature_param(settings.LLM_SUMMARY_TIER_MODEL, 0.3),
-            **get_token_param(settings.LLM_SUMMARY_TIER_MODEL, 300),
+            max_tokens=300,
+            temperature=0.3
         )
-        summary = resp.choices[0].message.content.strip()
-        logger.info("Successfully received summary from OpenAI.")
+        summary = resp_json["choices"][0]["message"]["content"].strip()
+        logger.info("Successfully received summary from Azure OpenAI.")
         return summary
-    except openai.APIError as e:
-        logger.error(f"OpenAI API Error during summarization: {e}", exc_info=True)
-        return f"(OpenAI API 오류: {e})"
     except Exception as e:
-        logger.error(f"OpenAI summarization failed: {e}", exc_info=True)
+        logger.error(f"Azure OpenAI summarization failed: {e}", exc_info=True)
         return f"(요약 불가: {e})"
 
 class MemoryRAG:

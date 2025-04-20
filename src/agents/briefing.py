@@ -3,8 +3,7 @@
 import logging
 from datetime import datetime
 from src.config import settings # Import settings for LLM config
-import openai
-from openai import OpenAI # Import OpenAI
+from src.utils.azure_openai import azure_chat_completion
 import json # To potentially parse complex details if needed
 
 logger = logging.getLogger(__name__)
@@ -23,15 +22,7 @@ def get_temperature_param(model: str, temperature: float) -> dict:
         return {"temperature": temperature}
 
 # --- OpenAI 모델 초기화 (BriefingAgent 용) ---
-if settings.OPENAI_API_KEY:
-    # Azure OpenAI SDK 설정
-    import openai
-    openai.api_type = "azure"
-    openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-    openai.api_version = settings.AZURE_OPENAI_API_VERSION
-    openai.api_key = settings.OPENAI_API_KEY
-    logger.info(f"BriefingAgent will use OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
-else:
+if not settings.OPENAI_API_KEY:
     logger.warning("OPENAI_API_KEY not set. Briefing will be basic.")
 
 class BriefingAgent:
@@ -83,31 +74,17 @@ class BriefingAgent:
                 {"role": "system", "content": "You are an expert assistant that writes concise daily trading summary reports in Korean based on execution logs."}, # System prompt
                 {"role": "user", "content": prompt}
             ]
-            openai.api_type = "azure"
-            openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-            openai.api_version = settings.AZURE_OPENAI_API_VERSION
-            openai.api_key = settings.AZURE_OPENAI_API_KEY
-            # 클라이언트는 api_key만 전달
-            client = OpenAI(
-                api_key=settings.AZURE_OPENAI_API_KEY,
-                api_type="azure",
-                api_base=settings.AZURE_OPENAI_ENDPOINT,
-                api_version=settings.AZURE_OPENAI_API_VERSION
-            )
-            resp = client.chat.completions.create(
-                model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
+            resp_json = azure_chat_completion(
+                deployment=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
                 messages=messages,
-                **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.5),
-                **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 300)
+                max_tokens=300,
+                temperature=0.5
             )
-            llm_summary = resp.choices[0].message.content.strip()
+            llm_summary = resp_json["choices"][0]["message"]["content"].strip()
             logger.info("Successfully received summary from OpenAI for briefing.")
             return llm_summary
-        except openai.APIError as e:
-            logger.error(f"OpenAI API Error during briefing summary: {e}", exc_info=True)
-            return f"(OpenAI API 오류: {e})"
         except Exception as e:
-            logger.error(f"OpenAI summary generation failed for briefing: {e}", exc_info=True)
+            logger.error(f"Azure OpenAI summarization failed for briefing: {e}", exc_info=True)
             return f"(LLM 요약 생성 중 오류 발생: {e})"
 
     def create_report_from_actions(self, execution_results: list) -> str:
