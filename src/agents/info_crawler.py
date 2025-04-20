@@ -46,7 +46,7 @@ class InfoCrawler:
         # Finnhub 설정 (심볼 검색)
         self.finnhub_client = FinnhubClient(settings.FINNHUB_API_KEY)
         # Tavily 설정 (뉴스 검색)
-        self.tavily_client = tavily.Client(api_key=settings.TAVILY_API_KEY)
+        self.tavily_client = tavily.Client(settings.TAVILY_API_KEY)
         
         # SerpAPI 설정 (일반 웹 검색용)
         if not settings.SERPAPI_API_KEY:
