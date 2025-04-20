@@ -23,6 +23,8 @@
     # Copy only the requirements file first to leverage Docker cache
     COPY requirements.lock ./
     
+    # Upgrade pip to the latest version (권장)
+    RUN pip install --upgrade pip
     # Install project dependencies using pip
     # requirements.lock에 tavily가 포함되어 있으므로 별도 명령 없이 자동 설치됩니다.
     # Use --no-cache-dir to reduce image size
