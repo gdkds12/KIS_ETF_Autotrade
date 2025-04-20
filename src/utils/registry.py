@@ -107,10 +107,15 @@ def search_symbols(query: str) -> list:
 
 @command
 def search_web(query: str) -> list:
-    """일반 웹 검색 결과를 SerpAPI를 통해 가져옵니다."""
+    """일반 웹 검색 결과를 Azure AI Foundry(Bing Grounding) 기반으로 가져옵니다."""
     if ORCHESTRATOR is None:
         return []
-    return ORCHESTRATOR.info_crawler.search_web(query=query)
+    # Azure AI Foundry(Bing Grounding) 기반 검색으로 대체
+    try:
+        return ORCHESTRATOR.info_crawler.search_web(query=query)
+    except Exception as e:
+        logging.error(f"Foundry-based web search failed: {e}")
+        return []
 
 @command
 def multi_search(query: str, attempts: str = "3") -> dict:
@@ -121,6 +126,7 @@ def multi_search(query: str, attempts: str = "3") -> dict:
     try:
         n = int(attempts)
     except ValueError:
+        logging.warning(f"Invalid attempts value '{attempts}', defaulting to 3.")
         logger.warning(f"Invalid attempts value '{attempts}', defaulting to 3.")
         n = 3
     except Exception as e: # Catch other potential errors during conversion
