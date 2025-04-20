@@ -3,6 +3,7 @@
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+import openai
 from openai import OpenAI # Import OpenAI
 import json # For parsing LLM response
 import uuid
@@ -119,12 +120,13 @@ class Orchestrator:
 
         # Initialize OpenAI API Key
         if settings.AZURE_OPENAI_API_KEY:
-            self.openai_client = OpenAI(
-                api_key=settings.AZURE_OPENAI_API_KEY,
-                api_type="azure",
-                api_base=settings.AZURE_OPENAI_ENDPOINT,
-                api_version=settings.AZURE_OPENAI_API_VERSION,
-            )
+            # Azure OpenAI 전역 설정
+            openai.api_type = "azure"
+            openai.api_base = settings.AZURE_OPENAI_ENDPOINT
+            openai.api_version = settings.AZURE_OPENAI_API_VERSION
+            openai.api_key = settings.AZURE_OPENAI_API_KEY
+            # 클라이언트는 api_key만 전달
+            self.openai_client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
             self.llm_model_name = settings.LLM_MAIN_TIER_MODEL  # Store model name
             logger.info(f"Orchestrator will use OpenAI model: {self.llm_model_name}")
         else:

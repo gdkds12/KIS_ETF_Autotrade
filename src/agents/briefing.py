@@ -3,6 +3,7 @@
 import logging
 from datetime import datetime
 from src.config import settings # Import settings for LLM config
+import openai
 from openai import OpenAI # Import OpenAI
 import json # To potentially parse complex details if needed
 
@@ -79,12 +80,14 @@ class BriefingAgent:
                 {"role": "system", "content": "You are an expert assistant that writes concise daily trading summary reports in Korean based on execution logs."}, # System prompt
                 {"role": "user", "content": prompt}
             ]
-            client = OpenAI(
-            api_key=settings.AZURE_OPENAI_API_KEY,
-            api_type="azure",
-            api_base=settings.AZURE_OPENAI_ENDPOINT,
-            api_version=settings.AZURE_OPENAI_API_VERSION,
-        ) # Create client
+            # Azure OpenAI 전역 설정
+        openai.api_type = "azure"
+        openai.api_base = settings.AZURE_OPENAI_ENDPOINT
+        openai.api_version = settings.AZURE_OPENAI_API_VERSION
+        openai.api_key = settings.AZURE_OPENAI_API_KEY
+        # 클라이언트는 api_key만 전달
+        client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+ # Create client
             resp = client.chat.completions.create(
                 model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
                 messages=messages,

@@ -50,17 +50,16 @@ INTENTS.members = True # Optional, if member info is needed
 # --- OpenAI Client --- 
 openai_client = None
 if settings.OPENAI_API_KEY:
-    openai.api_type = "azure"
-    openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-    openai.api_version = settings.AZURE_OPENAI_API_VERSION
-    openai.api_key = settings.AZURE_OPENAI_API_KEY
+    # Azure 설정은 전역 openai 모듈에 설정
+    import openai as oai
+    oai.api_type = "azure"
+    oai.api_base = settings.AZURE_OPENAI_ENDPOINT
+    oai.api_version = settings.AZURE_OPENAI_API_VERSION
+    oai.api_key = settings.AZURE_OPENAI_API_KEY
     logger.info("Configured OpenAI SDK for Azure.")
-    openai_client = AsyncOpenAI(
-        api_key=settings.AZURE_OPENAI_API_KEY,
-        api_type="azure",
-        api_base=settings.AZURE_OPENAI_ENDPOINT,
-        api_version=settings.AZURE_OPENAI_API_VERSION,
-    )
+    # AsyncOpenAI 생성 시에는 api_key만 전달
+    openai_client = AsyncOpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+
     logger.info("OpenAI client initialized.")
 else:
     logger.warning("OPENAI_API_KEY not set. OpenAI features will be disabled.")

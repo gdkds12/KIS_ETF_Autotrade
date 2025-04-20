@@ -93,12 +93,14 @@ class InfoCrawler:
         try:
             # OpenAI에 직접 요약 요청
             from openai import OpenAI
-            client = OpenAI(
-                api_key=settings.OPENAI_API_KEY,
-                api_type="azure",
-                api_base=settings.OPENAI_ENDPOINT,
-                api_version=settings.OPENAI_API_VERSION,
-            )
+            # Azure OpenAI 전역 설정
+            openai.api_type = "azure"
+            openai.api_base = settings.AZURE_OPENAI_ENDPOINT
+            openai.api_version = settings.AZURE_OPENAI_API_VERSION
+            openai.api_key = settings.AZURE_OPENAI_API_KEY
+            # 클라이언트는 api_key만 전달
+            client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+
             
             system_prompt = (
                 "당신은 수집된 정보를 명확하고 간결하게 요약하는 전문가입니다. "
