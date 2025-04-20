@@ -47,12 +47,13 @@ def summarize_text(text: str, topic: str = None) -> str:
     """LLM을 사용하여 텍스트 요약하기"""
     import openai
 from openai import OpenAI
-    # Azure OpenAI 전역 설정
+    # Azure OpenAI 전역 설정을 위해 openai 모듈 임포트
+    import openai
     openai.api_type = "azure"
     openai.api_base = settings.AZURE_OPENAI_ENDPOINT
     openai.api_version = settings.AZURE_OPENAI_API_VERSION
     openai.api_key = settings.AZURE_OPENAI_API_KEY
-    # 클라이언트는 api_key만 전달
+    # 클라이언트 생성 시에는 api_key만 전달
     client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
 
     
