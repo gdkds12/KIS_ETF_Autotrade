@@ -136,8 +136,10 @@ def get_quote(symbol: str) -> str:
     # Ensure Orchestrator and KIS interface are available
     if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'kis'):
         return "(Orchestrator or KIS interface not ready)"
-    # Execute get_quote via Orchestrator's KIS interface
-    return ORCHESTRATOR.kis.get_quote(symbol=symbol)
+    # Auto-detect foreign stock symbols
+    is_foreign = ORCHESTRATOR.kis.is_overseas_symbol(symbol)
+    # Execute get_quote with appropriate flag
+    return ORCHESTRATOR.kis.get_quote(symbol=symbol, is_foreign=is_foreign)
 
 @command
 def get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str) -> list:

@@ -282,7 +282,7 @@ class InfoCrawler:
         }
         logger.info(f"Performing web search for query: '{query}' using SerpAPI...")
         try:
-            resp = self.session.get(self.serpapi_url, params=params, timeout=10)
+            resp = requests.get(self.serpapi_url, params=params, timeout=10)
             resp.raise_for_status() # Raise HTTPError for bad responses
             data = resp.json()
             results = []
