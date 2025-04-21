@@ -67,15 +67,11 @@ class InfoCrawler:
         Finnhub API를 이용한 최신 뉴스 검색.
         - `query` 가 주어지면 결과를 제목/요약에 포함된 키워드 기준으로 필터링한다.
         """
-        try:
-            raw = self.finnhub.client.general_news(category=category)[:50]
-            if query:
-                q = query.lower()
-                raw = [n for n in raw if q in n.get("headline", "").lower() or q in n.get("summary", "").lower()]
-            return raw[:20]
-        except Exception as e:
-            logger.error(f"Finnhub news search error: {e}", exc_info=True)
+        # Delegated to web search only
+        # Using Google Custom Search for all queries
+        if not query:
             return []
+        return self.search_web(query=query)
 
     # New method to search symbols using requests
     def search_web(self, query: str, num_results: int = 10) -> list[dict]:
@@ -174,23 +170,20 @@ class InfoCrawler:
         """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
         logger.info(f"Getting market summary for query: {user_query!r}")
         
-        # Fetch news tailored to the user query if provided
+        # Fetch web results for the user query (web search only)
+        eng_query = self._translate_to_en(user_query) if user_query else ""
         if user_query:
-            eng_query = self._translate_to_en(user_query)
-            logger.info(f"Searching news relevant to query: {eng_query!r}")
-            news_list = self.search_news(query=eng_query, category='general')
+            logger.info(f"Searching web results for query: {eng_query!r}")
         else:
-            logger.info("Searching general news as no specific query provided.")
-            news_list = self.search_news(category='general')
+            logger.info("Searching general web results as no specific query provided.")
+        news_list = self.search_web(query=eng_query)
         
         # Normalize news_list to a list to avoid slicing on non-list types
-        if isinstance(news_list, dict):
-            news_list = [news_list]
-        elif not isinstance(news_list, list):
+        if not isinstance(news_list, list):
             news_list = []
         if not news_list:
-            logger.warning("No news fetched from Finnhub for market summary.")
-            return "(최신 시장 뉴스를 가져올 수 없습니다.)"
+            logger.warning("No web results fetched for market summary.")
+            return "(관련 웹 정보를 가져올 수 없습니다.)"
 
         # 1차 요약: 각 기사별 핵심 요약 수행 (경량 LLM)
         articles_for_prompt = []
@@ -225,7 +218,7 @@ class InfoCrawler:
 
         for idx, item in enumerate(news_list[:max_articles], 1):
             headline = item.get("headline", "")
-            summary = item.get("summary", "") or item.get("source", "")
+            summary = item.get("summary", "") or item.get("snippet", "")
             url = item.get("url") or item.get("link")
             article_text = ""
             if url:
