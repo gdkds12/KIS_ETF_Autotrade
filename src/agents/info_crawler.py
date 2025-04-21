@@ -193,34 +193,91 @@ class InfoCrawler:
             return "(최신 시장 뉴스를 가져올 수 없습니다.)"
 
         # 1차 요약: 각 기사별 핵심 요약 수행 (경량 LLM)
-        snippets = []
-        for item in news_list[:max_articles]:
+        articles_for_prompt = []
+        import requests
+        from bs4 import BeautifulSoup
+        def fetch_article_text(url):
+            try:
+                resp = requests.get(url, timeout=7)
+                resp.raise_for_status()
+                soup = BeautifulSoup(resp.text, 'html.parser')
+                # Try to extract main content heuristically
+                # 1. Look for <article>
+                article_tag = soup.find('article')
+                if article_tag:
+                    return article_tag.get_text(separator=' ', strip=True)
+                # 2. Fallback: largest <div> by text length
+                divs = soup.find_all('div')
+                if divs:
+                    div = max(divs, key=lambda d: len(d.get_text()))
+                    if len(div.get_text()) > 200:
+                        return div.get_text(separator=' ', strip=True)
+                # 3. Fallback: all <p> tags joined
+                ps = soup.find_all('p')
+                if ps:
+                    text = ' '.join([p.get_text(separator=' ', strip=True') for p in ps])
+                    if len(text) > 200:
+                        return text
+                return ""
+            except Exception as e:
+                logger.warning(f"Failed to fetch article text from {url}: {e}")
+                return ""
+
+        for idx, item in enumerate(news_list[:max_articles], 1):
             headline = item.get("headline", "")
             summary = item.get("summary", "") or item.get("source", "")
-            if headline or summary:
-                snippets.append(f"- {headline.strip()} ({summary.strip()})" if headline and summary else f"- {headline.strip() or summary.strip()}")
-        if not snippets:
-            logger.warning("Could not extract usable snippets from fetched news.")
+            url = item.get("url") or item.get("link")
+            article_text = ""
+            if url:
+                article_text = fetch_article_text(url)
+            if article_text and len(article_text) > 200:
+                content = article_text
+            elif summary:
+                content = summary
+            else:
+                content = headline
+            if headline or content:
+                articles_for_prompt.append(f"[기사 {idx}]\n제목: {headline.strip()}\n내용: {content.strip()}\nURL: {url if url else ''}\n---")
+        if not articles_for_prompt:
+            logger.warning("Could not extract usable news article contents.")
             return "(뉴스 내용을 처리할 수 없습니다.)"
 
-        # First-phase: item-level summary using lightweight model
-        item_summaries = []
-        for s in snippets:
-            # 1차 요약도 메인 LLM으로 처리 (경량 모델 미사용)
-            from src.utils.azure_openai import azure_chat_completion
-            import datetime, pytz
-            now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
-            system_prompt1 = (
-                f"You are a trading assistant summarizing a single news snippet. The current local time is {now_kst} (KST). "
-                f"Summarize the following news snippet for the user query '{user_query}'."
-            )
-            messages1 = [
-                {"role": "system", "content": system_prompt1},
-                {"role": "user", "content": s}
-            ]
-            resp1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages1, max_tokens=200, temperature=0.3)
-            item_summary = resp1["choices"][0]["message"]["content"].strip()
-            item_summaries.append(item_summary)
+        # 1차 요약: 기사 전체를 한 번에 LLM에 보내 중복 없이 핵심만 요약
+        from src.utils.azure_openai import azure_chat_completion
+        import datetime, pytz
+        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+        system_prompt_1 = (
+            f"You are a summarization expert. The current local time is {now_kst} (KST). "
+            f"You will be given multiple news articles, each clearly delimited and labeled. "
+            f"Summarize the following articles in Korean, removing redundancy and focusing on the core facts. Do not answer the user query yet."
+        )
+        user_content_1 = '\n'.join(articles_for_prompt)
+        messages_1 = [
+            {"role": "system", "content": system_prompt_1},
+            {"role": "user", "content": user_content_1}
+        ]
+        resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages_1, max_tokens=800, temperature=0.3)
+        first_summary = resp_1["choices"][0]["message"]["content"].strip()
+        logger.info(f"Generated first-phase summary from {len(articles_for_prompt)} articles (length: {len(first_summary)}).")
+
+        # 2차 요약: 1차 요약 결과와 사용자 질문을 함께 LLM에 보내 최종 답변 생성
+        system_prompt_2 = (
+            f"You are a trading assistant. The current local time is {now_kst} (KST). "
+            f"You will be given a summary of recent news articles. Answer the user's question below based on this summary, prioritizing recency and relevance. Answer in Korean."
+        )
+        user_content_2 = f"요약된 뉴스:
+{first_summary}
+
+사용자 질문: {user_query}"
+        messages_2 = [
+            {"role": "system", "content": system_prompt_2},
+            {"role": "user", "content": user_content_2}
+        ]
+        resp_2 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages_2, max_tokens=800, temperature=0.3)
+        final_answer = resp_2["choices"][0]["message"]["content"].strip()
+        logger.info(f"Generated final answer from summarized news (length: {len(final_answer)}).")
+        return final_answer
+
 
         # Second-phase: final summary using main LLM
         combined_first = "\n".join([f"- {ms}" for ms in item_summaries])
