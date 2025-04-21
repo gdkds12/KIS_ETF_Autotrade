@@ -6,6 +6,7 @@ from discord import ButtonStyle, ui  # ButtonStyle and ui module
 from discord.ui import View, Button  # View and Button for UI components
 from discord.ext import commands
 from discord import Interaction, Embed
+from discord import app_commands
 from src.config import settings
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 # 디스코드 봇 클래스 정의
 class TradingBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=self._get_intents())
+        super().__init__(intents=self._get_intents())  # Remove command_prefix for slash-only
         self.db_session_factory = SessionLocal
         self.active_sessions = {}  # 세션 추적을 위한 저장소
 
@@ -35,7 +36,10 @@ class TradingBot(commands.Bot):
         # Orchestrator 초기화 및 등록
         await self._initialize_orchestrator()
 
-        # 명령어 동기화
+        # Register slash commands
+        self.tree.add_command(self.trade)
+        self.tree.add_command(self.market_summary)
+        self.tree.add_command(self.confirm_order)
         await self.tree.sync()
         logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
         logger.info("Bot is ready.")
@@ -74,15 +78,15 @@ class TradingBot(commands.Bot):
     async def on_ready(self):
         logger.info(f"{self.user} has connected to Discord!")
 
-    # 새로운 트레이딩 세션을 시작하는 명령어
-    @commands.command(name="trade", help="새로운 트레이딩 세션을 시작합니다.")
-    async def trade(self, ctx):
-        user = ctx.author
+    # 새로운 트레이딩 세션을 시작하는 슬래시 커맨드
+    @app_commands.command(name="trade", description="새로운 트레이딩 세션을 시작합니다.")
+    async def trade(self, interaction: Interaction):
+        user = interaction.user
         logger.info(f"Received /trade command from {user.id}")
 
         # 새 트레이딩 세션 생성
         thread_name = f"Trade Session - {user.display_name} ({datetime.now().strftime('%H:%M')})"
-        thread = await ctx.channel.create_thread(name=thread_name, auto_archive_duration=1440)  # 24시간 후 자동 아카이브
+        thread = await interaction.channel.create_thread(name=thread_name, auto_archive_duration=1440)  # 24시간 후 자동 아카이브
         logger.info(f"Created thread {thread.id} for user {user.id}")
 
         # DB에 트레이딩 세션 정보 저장
@@ -101,7 +105,7 @@ class TradingBot(commands.Bot):
             logger.error(f"Failed to create TradingSession in DB: {e}", exc_info=True)
             db.rollback()
             await thread.delete()
-            await ctx.send("세션 시작 중 오류가 발생했습니다.", ephemeral=True)
+            await interaction.response.send_message("세션 시작 중 오류가 발생했습니다.", ephemeral=True)
             return
         finally:
             db.close()
@@ -113,15 +117,15 @@ class TradingBot(commands.Bot):
             'llm_session_id': session_uuid
         }
 
-        await ctx.send(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
+        await interaction.response.send_message(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
 
-    # 시장 동향 요약 요청 명령어
-    @commands.command(name="market_summary", help="시장 동향을 요약하여 보여줍니다.")
-    async def market_summary(self, ctx, query: str):
+    # 시장 동향 요약 요청 슬래시 커맨드
+    @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
+    async def market_summary(self, interaction: Interaction, query: str):
         orchestrator = self.get_orchestrator()
 
         if not orchestrator:
-            await ctx.send("Orchestrator가 준비되지 않았습니다.")
+            await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
             return
 
         market_summary = await orchestrator.info_crawler.get_market_summary(query)
@@ -132,14 +136,14 @@ class TradingBot(commands.Bot):
             timestamp=datetime.now(timezone.utc)
         )
 
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
-    # 트레이딩 주문 확인
-    @commands.command(name="confirm_order", help="주문을 확인하고 실행합니다.")
-    async def confirm_order(self, ctx, order_details: str):
+    # 트레이딩 주문 확인 슬래시 커맨드
+    @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
+    async def confirm_order(self, interaction: Interaction, order_details: str):
         # 사용자 확인을 위한 메시지 전송
-        view = OrderConfirmationView(bot=self, session_thread_id=ctx.channel.id, order_details=order_details)
-        await ctx.send("주문을 확인하고 실행하려면 버튼을 눌러주세요.", view=view)
+        view = OrderConfirmationView(bot=self, session_thread_id=interaction.channel.id, order_details=order_details)
+        await interaction.response.send_message("주문을 확인하고 실행하려면 버튼을 눌러주세요.", view=view)
 
     def get_orchestrator(self):
         """Orchestrator 인스턴스를 반환"""
