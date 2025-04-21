@@ -150,7 +150,7 @@ class InfoCrawler:
             logger.error(f"[get_market_summary] Google search exception: {e}", exc_info=True)
         news_list = google_results
         logger.info(f"[get_market_summary] Collected {len(news_list)} web results.")
-y] news_list length: {len(news_list)}; first item: {news_list[0] if news_list else None}")
+)
         
         # Normalize news_list to a list to avoid slicing on non-list types
         if not isinstance(news_list, list):
