@@ -147,13 +147,13 @@ class TradeCog(commands.Cog):
         }])
         history.append({"role": "user", "content": message.content})
 
-        logger.debug(f"[on_message] Calling azure_chat_completion with deployment={settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO!r} and history length={len(history)}")
+        logger.debug(f"[on_message] Calling azure_chat_completion with deployment={settings.AZURE_OPENAI_DEPLOYMENT_GPT4!r} and history length={len(history)}")
         # Call REST-based AI agent asynchronously
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
             azure_chat_completion,
-            settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO,
+            settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
             history,
             1000,
             0.7
@@ -201,7 +201,7 @@ class TradeCog(commands.Cog):
                     resp2 = await loop.run_in_executor(
                         None,
                         azure_chat_completion,
-                        settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO,
+                        settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
                         history,
                         1000,
                         0.7
