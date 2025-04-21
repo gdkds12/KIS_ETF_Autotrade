@@ -43,10 +43,14 @@ class TradeCog(commands.Cog):
                 color=0x2ecc71,
                 timestamp=datetime.now(timezone.utc)
             )
-            embed.add_field(name="예수금", value=f"{balance.get('available_cash', 'N/A'):,}원", inline=False)
-            embed.add_field(name="총자산", value=f"{balance.get('total_asset_value', 'N/A'):,}원", inline=False)
-            embed.add_field(name="총손익", value=f"{balance.get('total_pnl', 'N/A'):,}원", inline=False)
-            embed.add_field(name="총손익률", value=f"{balance.get('total_pnl_percent', 'N/A')}%", inline=False)
+            available_cash = balance.get('available_cash', 'N/A')
+            asset_value    = balance.get('total_asset_value', 'N/A')
+            total_pnl      = balance.get('total_pnl', 'N/A')
+            pnl_percent    = balance.get('total_pnl_percent', 'N/A')
+            embed.add_field(name="예수금", value=(f"{available_cash:,}원" if isinstance(available_cash, (int, float)) else f"{available_cash}원"), inline=False)
+            embed.add_field(name="총자산", value=(f"{asset_value:,}원" if isinstance(asset_value, (int, float)) else f"{asset_value}원"), inline=False)
+            embed.add_field(name="총손익", value=(f"{total_pnl:,}원" if isinstance(total_pnl, (int, float)) else f"{total_pnl}원"), inline=False)
+            embed.add_field(name="총손익률", value=(f"{pnl_percent}%" if isinstance(pnl_percent, (int, float)) else f"{pnl_percent}%"), inline=False)
             await interaction.response.send_message(embed=embed)
         except Exception as e:
             logger.error(f"/balance command error: {e}", exc_info=True)
@@ -231,12 +235,14 @@ class TradingBot(commands.Bot):
         """Orchestrator를 초기화하고 에이전트와 연결합니다."""
         try:
             # KIS Broker 인스턴스 생성
+            is_virtual = settings.KIS_VIRTUAL_ACCOUNT
             broker = KisBroker(
                 app_key=settings.APP_KEY,
                 app_secret=settings.APP_SECRET,
-                base_url=settings.BASE_URL,
+                base_url=(settings.KIS_VIRTUAL_URL if is_virtual else settings.BASE_URL),
                 cano=settings.CANO,
-                acnt_prdt_cd=settings.ACNT_PRDT
+                acnt_prdt_cd=settings.ACNT_PRDT,
+                virtual_account=is_virtual
             )
 
             # Qdrant client 인스턴스 생성
