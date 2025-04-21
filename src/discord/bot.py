@@ -185,7 +185,7 @@ class TradeCog(commands.Cog):
                     self.bot.active_sessions[channel_id] = session
                     logger.debug(f"[on_message] Calling LLM again to summarize function result.")
                     # 함수 실행 결과를 요약하도록 LLM 재호출
-                    now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+                    now_kst = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
                     history.append({"role": "system", "content":
                         f"You are a trading assistant for Korean ETF and global stock investors. "
                         f"The current local time is {now_kst}. The local time zone is Asia/Seoul (KST, UTC+9). Always use this time and time zone for all date/time reasoning, news relevance, and when presenting or interpreting dates and times for the user, unless otherwise specified. "
