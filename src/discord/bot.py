@@ -8,6 +8,7 @@ from discord.ui import View, Button  # View and Button for UI components
 from discord.ext import commands
 from discord import Interaction, Embed
 from discord import app_commands
+from src.agents.finnhub_client import FinnhubClient
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
 
