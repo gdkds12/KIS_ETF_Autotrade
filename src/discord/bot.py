@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from discord import Embed
 from datetime import datetime, timezone
+from typing import Any
 from src.config import settings
 from src.discord.trading_bot import bot, run_discord_bot
 import src.discord.commands.registry_commands
