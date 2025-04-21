@@ -7,6 +7,9 @@ from discord.ui import View, Button  # View and Button for UI components
 from discord.ext import commands
 from discord import Interaction, Embed
 from discord import app_commands
+
+GUILD_ID = 1363088557517967582
+
 from src.config import settings
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
@@ -19,10 +22,74 @@ from qdrant_client import QdrantClient
 
 logger = logging.getLogger(__name__)
 
+class TradeCog(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @app_commands.command(name="trade", description="새로운 트레이딩 세션을 시작합니다.")
+    async def trade(self, interaction: Interaction):
+        user = interaction.user
+        logger.info(f"Received /trade command from {user.id}")
+
+        # 새 트레이딩 세션 생성
+        thread_name = f"Trade Session - {user.display_name} ({datetime.now().strftime('%H:%M')})"
+        thread = await interaction.channel.create_thread(name=thread_name, auto_archive_duration=1440)
+        logger.info(f"Created thread {thread.id} for user {user.id}")
+
+        # DB에 트레이딩 세션 정보 저장
+        session_uuid = str(uuid.uuid4())
+        db = self.bot.db_session_factory()
+        try:
+            new_session = TradingSession(
+                session_uuid=session_uuid,
+                discord_thread_id=str(thread.id),
+                discord_user_id=str(user.id)
+            )
+            db.add(new_session)
+            db.commit()
+            logger.info(f"Created TradingSession entry in DB for UUID {session_uuid}")
+        except Exception as e:
+            logger.error(f"Failed to create TradingSession in DB: {e}", exc_info=True)
+            db.rollback()
+            await thread.delete()
+            await interaction.response.send_message("세션 시작 중 오류가 발생했습니다.", ephemeral=True)
+            return
+        finally:
+            db.close()
+
+        self.bot.active_sessions[thread.id] = {
+            'user_id': user.id,
+            'start_time': datetime.now(),
+            'last_interaction_time': datetime.now(),
+            'llm_session_id': session_uuid
+        }
+
+        await interaction.response.send_message(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
+
+    @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
+    async def market_summary(self, interaction: Interaction, query: str):
+        orchestrator = self.bot.get_orchestrator()
+        if not orchestrator:
+            await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
+            return
+        market_summary = await orchestrator.info_crawler.get_market_summary(query)
+        embed = Embed(
+            title="📊 시장 동향",
+            description=market_summary,
+            color=0x3498db,
+            timestamp=datetime.now(timezone.utc)
+        )
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
+    async def confirm_order(self, interaction: Interaction, order_details: str):
+        view = OrderConfirmationView(bot=self.bot, session_thread_id=interaction.channel.id, order_details=order_details)
+        await interaction.response.send_message("주문을 확인하고 실행하려면 버튼을 눌러주세요.", view=view)
+
 # 디스코드 봇 클래스 정의
 class TradingBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=self._get_intents())  # command_prefix is required by BotBase
+        super().__init__(command_prefix="!", intents=self._get_intents())
         self.db_session_factory = SessionLocal
         self.active_sessions = {}  # 세션 추적을 위한 저장소
 
@@ -36,14 +103,9 @@ class TradingBot(commands.Bot):
         # Orchestrator 초기화 및 등록
         await self._initialize_orchestrator()
 
-        # GUILD_ID를 이용해 즉시 명령어 반영
-        GUILD_ID = 1363088557517967582
+        # Cog 등록 (slash commands)
+        await self.add_cog(TradeCog(self))
         guild = discord.Object(id=GUILD_ID)
-
-        # Register slash commands (guild-specific for instant update)
-        self.tree.add_command(self.trade, guild=guild)
-        self.tree.add_command(self.market_summary, guild=guild)
-        self.tree.add_command(self.confirm_order, guild=guild)
         await self.tree.sync(guild=guild)
         logger.info(f"[GUILD {GUILD_ID}] Logged in as {self.user} (ID: {self.user.id})")
         logger.info("Bot is ready.")
@@ -81,73 +143,6 @@ class TradingBot(commands.Bot):
 
     async def on_ready(self):
         logger.info(f"{self.user} has connected to Discord!")
-
-    # 새로운 트레이딩 세션을 시작하는 슬래시 커맨드
-    @app_commands.command(name="trade", description="새로운 트레이딩 세션을 시작합니다.")
-    async def trade(self, interaction: Interaction):
-        user = interaction.user
-        logger.info(f"Received /trade command from {user.id}")
-
-        # 새 트레이딩 세션 생성
-        thread_name = f"Trade Session - {user.display_name} ({datetime.now().strftime('%H:%M')})"
-        thread = await interaction.channel.create_thread(name=thread_name, auto_archive_duration=1440)  # 24시간 후 자동 아카이브
-        logger.info(f"Created thread {thread.id} for user {user.id}")
-
-        # DB에 트레이딩 세션 정보 저장
-        session_uuid = str(uuid.uuid4())  # UUID 생성
-        db = self.db_session_factory()
-        try:
-            new_session = TradingSession(
-                session_uuid=session_uuid,
-                discord_thread_id=str(thread.id),
-                discord_user_id=str(user.id)
-            )
-            db.add(new_session)
-            db.commit()
-            logger.info(f"Created TradingSession entry in DB for UUID {session_uuid}")
-        except Exception as e:
-            logger.error(f"Failed to create TradingSession in DB: {e}", exc_info=True)
-            db.rollback()
-            await thread.delete()
-            await interaction.response.send_message("세션 시작 중 오류가 발생했습니다.", ephemeral=True)
-            return
-        finally:
-            db.close()
-
-        self.active_sessions[thread.id] = {
-            'user_id': user.id,
-            'start_time': datetime.now(),
-            'last_interaction_time': datetime.now(),
-            'llm_session_id': session_uuid
-        }
-
-        await interaction.response.send_message(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
-
-    # 시장 동향 요약 요청 슬래시 커맨드
-    @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
-    async def market_summary(self, interaction: Interaction, query: str):
-        orchestrator = self.get_orchestrator()
-
-        if not orchestrator:
-            await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
-            return
-
-        market_summary = await orchestrator.info_crawler.get_market_summary(query)
-        embed = Embed(
-            title="📊 시장 동향",
-            description=market_summary,
-            color=0x3498db,
-            timestamp=datetime.now(timezone.utc)
-        )
-
-        await interaction.response.send_message(embed=embed)
-
-    # 트레이딩 주문 확인 슬래시 커맨드
-    @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
-    async def confirm_order(self, interaction: Interaction, order_details: str):
-        # 사용자 확인을 위한 메시지 전송
-        view = OrderConfirmationView(bot=self, session_thread_id=interaction.channel.id, order_details=order_details)
-        await interaction.response.send_message("주문을 확인하고 실행하려면 버튼을 눌러주세요.", view=view)
 
     def get_orchestrator(self):
         """Orchestrator 인스턴스를 반환"""
