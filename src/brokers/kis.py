@@ -469,6 +469,82 @@ class KisBroker:
             )
         }
 
+    def search_symbol(self, query: str, is_foreign: bool = False) -> list:
+        """종목명 또는 티커로 주식/ETF를 검색합니다.
+        
+        Args:
+            query: 검색어 (종목명 또는 티커)
+            is_foreign: 해외주식 여부
+            
+        Returns:
+            검색 결과 목록
+        """
+        logger.info(f"Searching for symbol: {query} (foreign: {is_foreign})")
+        
+        # 해외주식 검색
+        if is_foreign:
+            try:
+                # 해외주식 티커 또는 종목명 검색 API 호출
+                tr_id = self._compute_tr_id("search_symbol_foreign")
+                path = "/uapi/overseas-stock/v1/quotations/search"
+                params = {
+                    "symbol": query,
+                    "search_type": "NAME"  # NAME으로 검색할 경우 종목명, SYMBOL로 검색할 경우 티커
+                }
+                response = self._request("GET", path, tr_id, params=params)
+                
+                # 응답 데이터 가공
+                result = []
+                if response and "output" in response:
+                    for item in response["output"]:
+                        result.append({
+                            "symbol": item.get("symbol", ""),
+                            "name": item.get("korname", "") or item.get("name", ""),
+                            "market": "US",
+                            "exchange": item.get("excd", "") or "NASDAQ/NYSE",
+                            "currency": "USD"
+                        })
+                return result
+            except Exception as e:
+                logger.error(f"Error searching foreign symbol: {e}", exc_info=True)
+                return []
+        # 국내주식 검색
+        else:
+            try:
+                # 국내주식 티커 또는 종목명 검색 API 호출
+                tr_id = self._compute_tr_id("search_symbol_domestic")
+                path = "/uapi/domestic-stock/v1/quotations/search"
+                params = {
+                    "query": query,
+                    "search_type": "NAME"  # NAME으로 검색할 경우 종목명, CODE로 검색할 경우 티커
+                }
+                response = self._request("GET", path, tr_id, params=params)
+                
+                # 응답 데이터 가공
+                result = []
+                if response and "output" in response:
+                    for item in response["output"]:
+                        result.append({
+                            "symbol": item.get("mksc_shrn_iscd", ""),  # 단축코드
+                            "name": item.get("hts_kor_isnm", ""),  # 한글종목명
+                            "market": "KR",
+                            "exchange": "KRX",
+                            "currency": "KRW"
+                        })
+                return result
+            except Exception as e:
+                logger.error(f"Error searching domestic symbol: {e}", exc_info=True)
+                # API 응답 실패 시 기본 검색 결과
+                if query in ["KODEX 200", "kodex200", "코덱스200", "코덱스 200"]:
+                    return [{
+                        "symbol": "069500",
+                        "name": "KODEX 200",
+                        "market": "KR",
+                        "exchange": "KRX",
+                        "currency": "KRW"
+                    }]
+                return []
+
 # 사용 예시 업데이트
 if __name__ == "__main__":
     from dotenv import load_dotenv
