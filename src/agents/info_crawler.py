@@ -34,6 +34,33 @@ class InfoCrawler:
         self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
         logger.info("InfoCrawler initialized (Google CSE + Finnhub).")
 
+    def _translate_to_en(self, text: str) -> str:
+        """Translate Korean text to English using Azure OpenAI."""
+        if not text:
+            return text
+        # If no Korean characters, return as-is
+        import re
+        if not re.search(r"[\uac00-\ud7a3]", text):
+            return text
+        try:
+            client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+            messages = [
+                {"role": "system", "content": "You are a translator that translates Korean to English."},
+                {"role": "user", "content": f"Translate the following into English: {text}"}
+            ]
+            resp = client.chat.completions.create(
+                model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
+                messages=messages,
+                **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.0),
+                **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 100)
+            )
+            translation = resp.choices[0].message.content.strip()
+            logger.info(f"Translated query to English: {translation}")
+            return translation
+        except Exception as e:
+            logger.error(f"Translation failed: {e}", exc_info=True)
+            return text
+
     # New method to search news using Bing Grounding
     def search_news(self, query: str = None, category: str = "general") -> list[dict]:
         """
@@ -50,13 +77,15 @@ class InfoCrawler:
             logger.error(f"Finnhub news search error: {e}", exc_info=True)
             return []
 
-    # except, return [] 블록 제거 및 들여쓰기 정상화
-
     # New method to search symbols using requests
     def search_web(self, query: str, num_results: int = 5) -> list[dict]:
         """Google Custom Search JSON API를 이용한 일반 웹 검색"""
         if not query:
             logger.warning("Empty query for web search.")
+            return []
+        # Debug: verify API credentials
+        if not settings.GOOGLE_API_KEY or not settings.GOOGLE_CX:
+            logger.error("Google CSE credentials missing. Set GOOGLE_API_KEY and GOOGLE_CX in .env.")
             return []
         url = "https://www.googleapis.com/customsearch/v1"
         params = {
@@ -65,14 +94,17 @@ class InfoCrawler:
             "q": query,
             "num": num_results
         }
+        logger.debug(f"search_web: Sending request to {url} with params {params}")
         try:
             resp = requests.get(url, params=params, timeout=10)
             # Handle non-200 responses (e.g., 403 Forbidden) gracefully
             if resp.status_code != 200:
                 logger.warning(f"Google Custom Search returned {resp.status_code} for query '{query}'. Skipping web search.")
                 return []
+            logger.debug(f"search_web: Received HTTP {resp.status_code}")
             data = resp.json()
             items = data.get("items", [])
+            logger.debug(f"search_web: Retrieved {len(items)} items")
             results = []
             for item in items:
                 results.append({
@@ -142,9 +174,9 @@ class InfoCrawler:
         
         # Fetch news tailored to the user query if provided
         if user_query:
-            logger.info(f"Searching news relevant to query: {user_query}")
-            # Assuming search_news can handle query text (otherwise adapt)
-            news_list = self.search_news(query=user_query, category='general')
+            eng_query = self._translate_to_en(user_query)
+            logger.info(f"Searching news relevant to query: {eng_query!r}")
+            news_list = self.search_news(query=eng_query, category='general')
         else:
             logger.info("Searching general news as no specific query provided.")
             news_list = self.search_news(category='general')
