@@ -1,36 +1,10 @@
-# Slash 명령·세션 관리자 
-
-# Module import for Azure‑mode OpenAI client configuration
-import requests
-from src.utils.azure_openai import azure_chat_completion
-
-import discord
-from discord import app_commands, Interaction, ButtonStyle, Embed, ui, Message, Thread
-from discord.ext import commands
 import logging
-import asyncio
-from datetime import datetime, timedelta, timezone
-import uuid
-import json # For order parsing
-import os
-import aiohttp # Added for making HTTP requests to FastAPI
-import traceback # Import traceback module
-from typing import Any
-
-# --- Registry and Utility imports ---
-from src.utils.registry import COMMANDS, set_orchestrator # Keep COMMANDS, set_orchestrator
-from src.utils import registry # Import the module itself for accessing ORCHESTRATOR
-from src.utils.discord_utils import DiscordRequestType # Import the enum from utils
-# ----------------------------------
-
-# --- Configuration and DB imports ---
 from src.config import settings
-from src.db.models import SessionLocal, TradingSession, SessionLog # DB Models
-from sqlalchemy import select
-# ----------------------------------
+from src.discord.trading_bot import bot, run_discord_bot
+import src.discord.commands.registry_commands
+import src.discord.commands.trading_commands
 
 logger = logging.getLogger(__name__)
-# logging.basicConfig(level=logging.INFO) # Configured in main execution block
 
 # --- Configuration Check --- 
 if not settings.DISCORD_TOKEN:
@@ -922,6 +896,8 @@ async def debug_market_summary(interaction: Interaction, query: str):
         await interaction.followup.send(error_message, ephemeral=True)
 # -------------------------
 
+
+
 # --- Orchestrator Communication --- 
 # This function is intended to be called by the Orchestrator.
 # In a real-world scenario, this might be part of a class or use a 
@@ -1062,24 +1038,4 @@ async def send_discord_request(request_type: DiscordRequestType, data: dict) -> 
         return False
 
 # --- Main Execution --- 
-def run_discord_bot():
-    if not settings.DISCORD_TOKEN:
-        logger.error("DISCORD_TOKEN not found in settings. Cannot start bot.")
-        return
-        
-    try:
-        bot.run(settings.DISCORD_TOKEN)
-    except discord.errors.LoginFailure:
-         logger.error("Failed to log in to Discord. Check your DISCORD_TOKEN.")
-    except Exception as e:
-         logger.error(f"An error occurred while running the Discord bot: {e}", exc_info=True)
-
-if __name__ == "__main__":
-    # Configure logging for the bot
-    logging.basicConfig(level=logging.INFO, 
-                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    # Optional: Lower discord lib logging level if too verbose
-    # logging.getLogger('discord').setLevel(logging.WARNING)
-    
-    print("Attempting to run the Discord bot...")
     run_discord_bot() 

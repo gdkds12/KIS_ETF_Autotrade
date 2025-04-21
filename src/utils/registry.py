@@ -14,6 +14,7 @@ from __future__ import annotations
 import inspect
 from typing import Callable, Dict, Any
 import pandas as pd
+import logging
 
 COMMANDS: Dict[str, Callable[..., Any]] = {}
 
@@ -84,9 +85,15 @@ def search_news(query: str) -> list:
     """Finnhub 기반 최신 뉴스 검색"""
     if ORCHESTRATOR is None:
         return []
-    # Decide whether to use query as symbol or rely on general category search in the method
-    # Passing query directly; the method can decide how to use it.
-    return ORCHESTRATOR.info_crawler.search_news(query=query)
+    try:
+        results = ORCHESTRATOR.info_crawler.search_news(query=query)
+        if not results:
+            logging.warning(f"search_news: Finnhub returned no results for '{query}', falling back to web search")
+            return ORCHESTRATOR.info_crawler.search_web(query=query)
+        return results
+    except Exception as e:
+        logging.error(f"search_news error for '{query}': {e}", exc_info=True)
+        return ORCHESTRATOR.info_crawler.search_web(query=query)
 
 @command
 def search_symbols(query: str) -> list:
@@ -158,8 +165,16 @@ def get_quote(symbol: str) -> str:
         return "(Orchestrator or KIS interface not ready)"
     # Auto-detect foreign stock symbols
     is_foreign = ORCHESTRATOR.kis.is_overseas_symbol(symbol)
-    # Execute get_quote with appropriate flag
-    return ORCHESTRATOR.kis.get_quote(symbol=symbol, is_foreign=is_foreign)
+    # Try KIS API first, fallback to Finnhub on error
+    try:
+        return ORCHESTRATOR.kis.get_quote(symbol=symbol, is_foreign=is_foreign)
+    except Exception as e:
+        logging.warning(f"KIS quote failed for {symbol}: {e}, falling back to Finnhub")
+        try:
+            return ORCHESTRATOR.info_crawler.finnhub.get_quote(symbol)
+        except Exception as e2:
+            logging.error(f"Finnhub fallback quote failed for {symbol}: {e2}")
+            return {"error": str(e2)}
 
 @command
 def get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str) -> list:
