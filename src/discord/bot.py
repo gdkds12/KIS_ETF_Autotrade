@@ -8,6 +8,8 @@ from discord.ext import commands
 from discord import Interaction, Embed
 from discord import app_commands
 
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+
 GUILD_ID = 1363088557517967582
 
 from src.config import settings
@@ -89,6 +91,7 @@ class TradeCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_message(self, message: discord.Message):
+        logger.debug(f"[on_message] Received message in channel {message.channel.id} from {message.author.id}: {message.content!r}")
         # AI chat in active session threads
         if message.author.bot:
             return
@@ -97,10 +100,26 @@ class TradeCog(commands.Cog):
             return
 
         session = self.bot.active_sessions[channel_id]
-        # Initialize or retrieve conversation history
-        history = session.get("history", [{"role": "system", "content": "You are a helpful trading assistant."}])
+        # Initialize or retrieve conversation history with system prompt for function usage
+        history = session.get("history", [{"role": "system", "content":
+            "당신은 아래 도구들을 사용할 수 있는 AI 트레이딩 어시스턴트입니다.\n"
+            "- get_balance(): 내 계좌의 잔고와 총 자산을 조회합니다.\n"
+            "- get_positions(): 현재 보유 중인 종목 목록을 조회합니다.\n"
+            "- get_market_summary(query: str): 입력한 질의(query)에 맞는 시장 요약 정보를 가져옵니다.\n"
+            "- search_news(query: str): 최신 뉴스 기사를 검색합니다.\n"
+            "- search_symbols(query: str): 종목명 또는 심볼로 주식/ETF를 검색합니다.\n"
+            "- search_web(query: str): 일반 웹 검색을 수행합니다.\n"
+            "- get_quote(symbol: str): 특정 주식/ETF의 현재 시세를 조회합니다.\n"
+            "- get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str): 과거 가격 데이터를 조회합니다.\n"
+            "- order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell_code: str): 현금 주문을 실행합니다.\n"
+            "- get_overseas_trading_status(): 해외 주식 거래 가능 여부를 확인합니다.\n"
+            "위 도구를 사용해야 할 때는 반드시 다음과 같은 JSON 형식으로 답변하세요:\n"
+            "{\"function\": \"<함수명>\", \"arguments\": {...}}\n"
+            "그 외에는 자연스럽게 한국어로 답변하세요."
+        }])
         history.append({"role": "user", "content": message.content})
 
+        logger.debug(f"[on_message] Calling azure_chat_completion with deployment={settings.AZURE_OPENAI_DEPLOYMENT_GPT35!r} and history length={len(history)}")
         # Call REST-based AI agent asynchronously
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
@@ -111,6 +130,8 @@ class TradeCog(commands.Cog):
             1000,
             0.7
         )
+        logger.debug(f"[on_message] azure_chat_completion response: {resp}")
+
         reply = resp["choices"][0]["message"]["content"]
         history.append({"role": "assistant", "content": reply})
 
@@ -118,6 +139,7 @@ class TradeCog(commands.Cog):
         session["history"] = history
         self.bot.active_sessions[channel_id] = session
 
+        logger.debug(f"[on_message] Sending reply: {reply!r}")
         # Send AI reply
         await message.channel.send(reply)
 
