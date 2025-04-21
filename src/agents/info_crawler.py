@@ -177,6 +177,7 @@ class InfoCrawler:
             f"Sort the articles in order of recency (most recent first) based on their timestamps or context. "
             f"Prioritize and highlight the most important and impactful news first. "
             f"Include all important facts and trends, and if possible, mention key points for each article. "
+            f"For each article, clearly indicate the source (such as the news outlet or website) and the article's publication date in the summary. "
             f"Remove redundancy, but do not omit meaningful details. "
             f"Structure the summary so that even readers who have not seen the original articles can understand the overall market situation."
         )

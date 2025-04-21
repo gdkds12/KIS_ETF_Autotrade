@@ -95,7 +95,22 @@ class TradeCog(commands.Cog):
             'llm_session_id': session_uuid
         }
 
-        await interaction.response.send_message(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
+        # 안내 임베드 메시지 생성
+    embed = Embed(
+        title="📢 트레이딩 세션 시작 안내",
+        description=(
+            f"{user.mention}님, 새로운 트레이딩 세션이 시작되었습니다!\n\n"
+            "아래 명령어와 버튼을 통해 주문을 생성, 확인, 실행할 수 있습니다.\n"
+            "- `/confirm_order` : 주문 확인 및 실행\n"
+            "- `/balance` : 계좌 잔고 조회\n\n"
+            "주문 실행/취소 시 반드시 안내 메시지와 버튼을 확인해 주세요."
+        ),
+        color=0x5865f2,
+        timestamp=datetime.now(timezone.utc)
+    )
+    embed.set_footer(text="KIS ETF Autotrade • Powered by AI", icon_url="https://cdn-icons-png.flaticon.com/512/4712/4712032.png")
+    await thread.send(embed=embed)
+    await interaction.response.send_message(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
@@ -302,12 +317,27 @@ class OrderConfirmationView(View):
             return
 
         if self.confirmed:
-            await interaction.response.send_message("이미 처리된 주문입니다.", ephemeral=True)
+            embed = Embed(
+                title="오류",
+                description="이미 처리된 주문입니다.",
+                color=0xe74c3c,
+                timestamp=datetime.now(timezone.utc)
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         self.confirmed = True
         await interaction.response.defer()  # 응답 지연
-        await interaction.followup.send(f"{interaction.user.mention} 주문을 실행합니다... {self.order_details}")
+        # 임베드로 주문 실행 안내
+        embed = Embed(
+            title="✅ 주문 실행",
+            description=f"{interaction.user.mention}님의 주문이 실행되었습니다!",
+            color=0x2ecc71,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="주문 상세", value=self.order_details, inline=False)
+        embed.set_footer(text="KIS ETF Autotrade", icon_url="https://cdn-icons-png.flaticon.com/512/4712/4712032.png")
+        await interaction.followup.send(embed=embed)
         logger.info(f"User confirmed order: {self.order_details}")
 
         # 여기에 주문 실행 로직을 추가합니다. (예: KIS API 호출)
@@ -316,11 +346,26 @@ class OrderConfirmationView(View):
     async def cancel_button(self, interaction: Interaction, button: Button):
         session_info = self.bot.active_sessions.get(self.session_thread_id)
         if not session_info or interaction.user.id != session_info['user_id']:
-            await interaction.response.send_message("세션을 시작한 사용자만 취소할 수 있습니다.", ephemeral=True)
+            embed = Embed(
+                title="오류",
+                description="세션을 시작한 사용자만 취소할 수 있습니다.",
+                color=0xe74c3c,
+                timestamp=datetime.now(timezone.utc)
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
         await interaction.response.defer()
-        await interaction.followup.send("주문 제안이 취소되었습니다.")
+        # 임베드로 주문 취소 안내
+        embed = Embed(
+            title="❌ 주문 취소",
+            description=f"{interaction.user.mention}님의 주문 제안이 취소되었습니다.",
+            color=0xe74c3c,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.add_field(name="주문 상세", value=self.order_details, inline=False)
+        embed.set_footer(text="KIS ETF Autotrade", icon_url="https://cdn-icons-png.flaticon.com/512/4712/4712032.png")
+        await interaction.followup.send(embed=embed)
 
         # 취소 처리 (DB 기록, 로그 등)
         logger.info(f"User canceled order confirmation: {self.order_details}")
