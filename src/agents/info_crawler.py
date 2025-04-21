@@ -1,7 +1,5 @@
 # 시장 이슈 수집·요약 
 import logging
-import os
-import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from bs4 import BeautifulSoup
@@ -12,18 +10,6 @@ import pytz
 
 logger = logging.getLogger(__name__)
 
-# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
-def get_token_param(model: str, limit: int) -> dict:
-    if model.startswith("o4") or model.startswith("gpt-4o"):
-        return {"max_completion_tokens": limit}
-    else:
-        return {"max_tokens": limit}
-
-def get_temperature_param(model: str, temperature: float) -> dict:
-    if model.startswith("o4") or model.startswith("gpt-4o"):
-        return {}  # 기본값 1.0만 지원
-    else:
-        return {"temperature": temperature}
 
 logger.info("InfoCrawler 초기화 완료: Google CSE + Finnhub 기반 정보 수집 및 Azure OpenAI 요약 사용")
 
@@ -172,8 +158,8 @@ class InfoCrawler:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     
-    if not settings.FINNHUB_API_KEY or not settings.OPENAI_API_KEY:
-        print("\nWarning: FINNHUB_API_KEY or OPENAI_API_KEY not set. Summarization might fail.")
+    if not settings.FINNHUB_API_KEY or not settings.AZURE_OPENAI_API_KEY:
+        print("\nWarning: FINNHUB_API_KEY or AZURE_OPENAI_API_KEY not set. Summarization might fail.")
     
     crawler = InfoCrawler()
     test_query = "최근 시장 동향은 어떤가요?"
