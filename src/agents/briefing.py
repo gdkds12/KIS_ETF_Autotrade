@@ -23,7 +23,7 @@ def get_temperature_param(model: str, temperature: float) -> dict:
 
 # --- OpenAI 모델 초기화 (BriefingAgent 용) ---
 if not settings.OPENAI_API_KEY:
-    logger.warning("OPENAI_API_KEY not set. Briefing will be basic.")
+    logger.warning("AZURE_OPENAI_API_KEY not set. Briefing will be basic.")
 
 class BriefingAgent:
     def __init__(self):
@@ -32,8 +32,8 @@ class BriefingAgent:
 
     def _generate_llm_summary(self, execution_results: list) -> str:
         """OpenAI ChatCompletion을 사용해 실행 결과에 대한 요약을 생성합니다."""
-        if not settings.OPENAI_API_KEY:
-            logger.warning("OpenAI API key not set. Cannot generate summary.")
+        if not settings.AZURE_OPENAI_API_KEY:
+            logger.warning("Azure OpenAI API key not set. Cannot generate summary.")
             return "(LLM 요약 생성 불가: API 키 미설정)"
 
         # Prepare context for LLM (remains the same)
@@ -69,7 +69,7 @@ class BriefingAgent:
 """
 
         try:
-            logger.info(f"Requesting OpenAI summary for briefing using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
+            logger.info(f"Requesting Azure OpenAI summary for briefing using {settings.LLM_LIGHTWEIGHT_TIER_MODEL}...")
             messages = [
                 {"role": "system", "content": "You are an expert assistant that writes concise daily trading summary reports in Korean based on execution logs."}, # System prompt
                 {"role": "user", "content": prompt}
@@ -81,7 +81,7 @@ class BriefingAgent:
                 temperature=0.5
             )
             llm_summary = resp_json["choices"][0]["message"]["content"].strip()
-            logger.info("Successfully received summary from OpenAI for briefing.")
+            logger.info("Successfully received summary from Azure OpenAI for briefing.")
             return llm_summary
         except Exception as e:
             logger.error(f"Azure OpenAI summarization failed for briefing: {e}", exc_info=True)
@@ -190,7 +190,7 @@ if __name__ == "__main__":
 
     # Ensure API key is available for LLM summary test
     if not settings.OPENAI_API_KEY:
-         print("\nWARNING: OPENAI_API_KEY not found in environment. LLM summary will be skipped.")
+         print("\nWARNING: AZURE_OPENAI_API_KEY not found in environment. LLM summary will be skipped.")
 
     agent = BriefingAgent()
     mock_results = [

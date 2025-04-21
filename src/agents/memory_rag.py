@@ -5,7 +5,6 @@ from qdrant_client.http.models import Distance, VectorParams
 # from sqlalchemy.orm import Session # For DB interaction if needed
 # from some_embedding_model import get_embedding # Placeholder
 import uuid
-import openai
 from sentence_transformers import SentenceTransformer # 실제 임베딩 모델 라이브러리
 from tenacity import retry, stop_after_attempt, wait_fixed # Qdrant 연결 재시도
 from sqlalchemy.orm import Session
@@ -37,11 +36,11 @@ def get_temperature_param(model: str, temperature: float) -> dict:
 
 # --- OpenAI 모델 초기화 (MemoryRAG 용) ---
 # Rely on global setting of openai.api_key done elsewhere (e.g., orchestrator, bot setup)
-if settings.OPENAI_API_KEY:
+if settings.AZURE_OPENAI_API_KEY:
     # openai.api_key = settings.OPENAI_API_KEY # Avoid setting globally multiple times
-    logger.info(f"MemoryRAG will use OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
+    logger.info(f"MemoryRAG will use Azure OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
 else:
-    logger.warning("OPENAI_API_KEY not set. Session summarization will use placeholder.")
+    logger.warning("AZURE_OPENAI_API_KEY not set. Session summarization will use placeholder.")
 
 # --- LLM 요약 함수 (Now using OpenAI) --- 
 def summarize_text(text: str, topic: str = None) -> str:
@@ -88,12 +87,12 @@ class MemoryRAG:
         self.embedding_model_name = settings.EMBEDDING_MODEL_NAME
         self.db_session_factory = db_session_factory # 세션 팩토리 저장
 
-        # OpenAI Embedding API 초기화
-        if not settings.OPENAI_API_KEY:
-            raise RuntimeError("OPENAI_API_KEY must be set to use OpenAI embeddings")
-        openai.api_key = settings.OPENAI_API_KEY
-        self.embedding_model = openai
-        logger.info(f"Using OpenAI embedding model: {self.embedding_model_name} (vector_dim={self.vector_dim})")
+        # (REMOVED) OpenAI Embedding API 초기화
+        if not settings.AZURE_OPENAI_API_KEY:
+            raise RuntimeError("AZURE_OPENAI_API_KEY must be set to use Azure OpenAI embeddings")
+
+
+
 
         # Qdrant 클라이언트 초기화
         self.qdrant_client = self._init_qdrant_client()
@@ -238,7 +237,7 @@ class MemoryRAG:
             conversation_text = "\n".join([f"{log.actor}: {log.message}" for log in logs])
             logger.info(f"Retrieved {len(logs)} logs for session {session_uuid} for summarization.")
 
-            # 3. LLM 요약 호출 (Now uses OpenAI)
+            # 3. LLM 요약 호출 (Now uses Azure OpenAI REST API)
             summary_text = summarize_text(conversation_text)
 
             # 4. Qdrant에 요약 저장
