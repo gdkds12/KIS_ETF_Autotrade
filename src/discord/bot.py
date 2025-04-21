@@ -9,11 +9,8 @@ from discord.ext import commands
 from discord import Interaction, Embed
 from discord import app_commands
 from src.agents.finnhub_client import FinnhubClient
-
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
-
-GUILD_ID = 1363088557517967582
-
+from src.agents.memory_rag import MemoryRAG
+from qdrant_client import QdrantClient
 from src.config import settings
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
@@ -22,8 +19,12 @@ from src.utils.registry import set_orchestrator
 from src.utils.discord_utils import DiscordRequestType
 from src.discord.utils import send_discord_request
 import asyncio
-from qdrant_client import QdrantClient
+import azure
 from src.utils.azure_openai import azure_chat_completion  # REST-based AI chat support
+
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+
+GUILD_ID = 1363088557517967582
 
 logger = logging.getLogger(__name__)
 
