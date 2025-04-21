@@ -34,6 +34,42 @@ class InfoCrawler:
         self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
         logger.info("InfoCrawler initialized (Google CSE + Finnhub).")
 
+    def fetch_article_text(self, url: str) -> str:
+        """
+        주어진 URL에서 기사 본문을 추출합니다. (BeautifulSoup 기반)
+        """
+        try:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            resp = requests.get(url, headers=headers, timeout=7)
+            if resp.status_code != 200:
+                logger.warning(f"[fetch_article_text] HTTP {resp.status_code} for {url}")
+                return ""
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # 대표적인 기사 본문 추출 시도
+            article = soup.find('article')
+            if article and article.get_text(strip=True):
+                return article.get_text(separator='\n', strip=True)
+            main = soup.find('div', id='main')
+            if main and main.get_text(strip=True):
+                return main.get_text(separator='\n', strip=True)
+            # 여러 <p> 태그를 합쳐서 본문 생성
+            ps = soup.find_all('p')
+            text = '\n'.join([p.get_text(strip=True) for p in ps if len(p.get_text(strip=True)) > 30])
+            if len(text) > 100:
+                return text
+            # fallback: 전체 텍스트 중 길이가 긴 부분
+            body = soup.find('body')
+            if body:
+                all_text = body.get_text(separator='\n', strip=True)
+                if len(all_text) > 100:
+                    return all_text
+            return ""
+        except Exception as e:
+            logger.error(f"[fetch_article_text] Error fetching article from {url}: {e}", exc_info=True)
+            return ""
+
     def _translate_to_en(self, text: str) -> str:
         """Translate Korean text to English using Azure OpenAI."""
         if not text:
@@ -89,7 +125,6 @@ class InfoCrawler:
                 "서로 모순되는 정보가 있으면 그 점을 명시하고, "
                 "날짜나 시간이 언급된 경우 가장 최신 정보에 더 가중치를 두세요. "
                 "가능한 한 객관적으로 정보를 요약하되, 명확한 추세가 보이면 결론도 포함하세요."
-    
             
             user_prompt = f"다음 정보를 바탕으로 '{query}'에 대해 요약해주세요:\n\n{combined_text}"
             
@@ -156,7 +191,8 @@ class InfoCrawler:
         # Normalize news_list to a list to avoid slicing on non-list types
         if not isinstance(news_list, list):
             news_list = []
-        if not news_list:
+        # 방어: news_list가 None이거나 리스트가 아니면 빈 리스트 처리
+        if not news_list or not isinstance(news_list, list):
             logger.warning("No web results fetched for market summary.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
