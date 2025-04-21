@@ -17,7 +17,7 @@ from qdrant_client import QdrantClient
 
 # 로컬 모듈
 from src.config import settings
-from src.utils.registry import COMMANDS, set_orchestrator, registry
+from src.utils.registry import COMMANDS, set_orchestrator
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
 from src.db.models import TradingSession, SessionLocal, SessionLog
