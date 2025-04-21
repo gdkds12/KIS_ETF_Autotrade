@@ -167,6 +167,7 @@ class InfoCrawler:
             return f"(요약 불가: {e})"
 
     def get_market_summary(self, user_query: str, max_articles: int = 5) -> str:
+    logger.info(f"[get_market_summary] called with user_query={user_query!r} max_articles={max_articles}")
         """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
         logger.info(f"Getting market summary for query: {user_query!r}")
         
@@ -177,6 +178,7 @@ class InfoCrawler:
         else:
             logger.info("Searching general web results as no specific query provided.")
         news_list = self.search_web(query=eng_query)
+        logger.info(f"[get_market_summary] news_list length: {len(news_list)}; first item: {news_list[0] if news_list else None}")
         
         # Normalize news_list to a list to avoid slicing on non-list types
         if not isinstance(news_list, list):
@@ -240,6 +242,7 @@ class InfoCrawler:
                 logger.debug(f"[기사 {idx}] headline만 사용")
             if headline or content:
                 articles_for_prompt.append(f"[기사 {idx}]\n제목: {headline.strip()}\n내용: {content.strip()}\nURL: {url if url else ''}\n---")
+        logger.info(f"[get_market_summary] articles_for_prompt length: {len(articles_for_prompt)}; first item: {articles_for_prompt[0] if articles_for_prompt else None}")
         if not articles_for_prompt:
             logger.warning("Could not extract usable news article contents.")
             return "(뉴스 내용을 처리할 수 없습니다.)"
