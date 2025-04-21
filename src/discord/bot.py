@@ -216,14 +216,15 @@ class TradeCog(commands.Cog):
             ])
 
             logger.debug(f"[on_message] 2nd call to azure_chat_completion (final answer)")
+            # 두 번째 호출에는 functions/function_call 인자 절대 전달하지 않음 (인자 순서 명확히)
             resp2 = await loop.run_in_executor(
                 None,
                 azure_chat_completion,
-                settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
-                history,
-                1000,
-                0.5
-                # 두 번째 호출에는 functions/function_call 파라미터를 넘기지 않음
+                settings.AZURE_OPENAI_DEPLOYMENT_GPT4,  # deployment
+                history,                                 # messages
+                1000,                                    # max_tokens
+                0.5                                      # temperature
+                # functions/function_call 인자 없음!
             )
             final_answer = resp2["choices"][0]["message"]["content"]
             await message.channel.send(final_answer)
