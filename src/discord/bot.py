@@ -6,6 +6,12 @@ from discord import Embed, Message, ui, ButtonStyle, Interaction
 from datetime import datetime, timezone
 import json
 import asyncio
+from datetime import datetime, timedelta, timezone
+import uuid
+import json # For order parsing
+import os
+import aiohttp # Added for making HTTP requests to FastAPI
+import traceback # Import traceback module
 from typing import Any
 from src.db.models import SessionLocal
 from src.config import settings
@@ -29,6 +35,23 @@ GUILD_ID = 1363088557517967582 # Optional: Specify guild ID for faster command r
 INTENTS = discord.Intents.default()
 INTENTS.message_content = True # Needs to be enabled in Developer Portal
 INTENTS.members = True # Optional, if member info is needed
+
+# --- OpenAI Client --- 
+openai_client = None
+if settings.OPENAI_API_KEY:
+    # Azure 설정은 전역 openai 모듈에 설정
+    import openai as oai
+    oai.api_type = "azure"
+    oai.api_base = settings.AZURE_OPENAI_ENDPOINT
+    oai.api_version = settings.AZURE_OPENAI_API_VERSION
+    oai.api_key = settings.AZURE_OPENAI_API_KEY
+    logger.info("Configured OpenAI SDK for Azure.")
+    # AsyncOpenAI 생성 시에는 api_key만 전달
+    openai_client = AsyncOpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
+
+    logger.info("OpenAI client initialized.")
+else:
+    logger.warning("OPENAI_API_KEY not set. OpenAI features will be disabled.")
 
 # --- Constants & Enums ---
 # Channel ID where order confirmations should be sent (Loaded from settings)
@@ -197,7 +220,7 @@ class TradingBot(commands.Bot):
               
     async def get_openai_response(self, session_info: dict, user_message: str) -> tuple[str, dict | None, str, str | None, str | None, dict | None, Any | None]:
         """Get response from OpenAI main tier model, managing conversation history and function calls."""
-        if not settings.AZURE_OPENAI_API_KEY:
+        if not openai_client:
             # Return None for the new fields on error
             return "(죄송합니다, OpenAI API가 설정되지 않아 응답할 수 없습니다.)", None, "(Debug info not generated)", None, None, None, None
 
@@ -258,29 +281,29 @@ class TradingBot(commands.Bot):
             #   1st completion - Allow function call or direct answer
             # -----------------------------------------
             use_messages = filter_messages_for_model(settings.LLM_MAIN_TIER_MODEL, messages)
-            loop = asyncio.get_running_loop()
-            resp_json = await loop.run_in_executor(None, lambda: azure_chat_completion(
-                deployment=settings.LLM_MAIN_TIER_MODEL,
+            completion = await openai_client.chat.completions.create(
+                model=settings.LLM_MAIN_TIER_MODEL,
                 messages=use_messages,
-                max_tokens=1000,
-                temperature=0.7,
-                functions=functions,
-                function_call="auto"
-            ))
-            choice = resp_json["choices"][0]
-            message_from_llm = choice["message"]
-            finish_reason = choice.get("finish_reason")
+                functions=functions, # Pass function specs
+                function_call="auto", # Let the model decide
+                **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
+                **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
+            )
+
+            choice = completion.choices[0]
+            message_from_llm = choice.message
+            finish_reason = choice.finish_reason # Capture finish_reason here
 
             # --- DEBUG INFO GENERATION --- 
             fc = None
             if finish_reason == 'function_call': # Use captured finish_reason
                 # Capture func_name when it's a function call
-                func_name = message_from_llm["function_call"]["name"]
+                func_name = message_from_llm.function_call.name
                 # Parse arguments here to potentially pass back
                 try:
-                    func_args = json.loads(message_from_llm["function_call"]["arguments"] or "{}")
+                    func_args = json.loads(message_from_llm.function_call.arguments or "{}")
                 except json.JSONDecodeError:
-                     logger.error(f"Failed to parse arguments for function {func_name}: {message_from_llm['function_call']['arguments']}")
+                     logger.error(f"Failed to parse arguments for function {func_name}: {message_from_llm.function_call.arguments}")
                      # Handle error, maybe return immediately or set func_args to indicate failure
                      func_args = {"error": "Failed to parse arguments"}
                      # Decide if we should stop here
@@ -291,7 +314,7 @@ class TradingBot(commands.Bot):
             debug_info = json.dumps({
                 "finish_reason": finish_reason, # Include captured finish_reason
                 "function_call": fc,
-                "raw_content": message_from_llm["content"] or "",
+                "raw_content": message_from_llm.content or "",
                 "orchestrator_set": registry.ORCHESTRATOR is not None
             }, ensure_ascii=False, indent=2)
             logger.debug(f"Generated Debug Info: {debug_info}")
@@ -301,19 +324,19 @@ class TradingBot(commands.Bot):
             if finish_reason != 'function_call': # Use captured finish_reason
                 # No function call, use the direct response
                 logger.info(f"LLM responded directly for session {llm_session_id}.")
-                response_text = message_from_llm["content"]
+                response_text = message_from_llm.content
                 # finish_reason is already set
             else:
                 # Function call requested, proceed with execution
                 logger.info(f"LLM requested function call: {func_name} for session {llm_session_id}.")
                 # fn_name is already captured as func_name
                 try:
-                    fn_args = json.loads(message_from_llm["function_call"]["arguments"] or "{}")
+                    fn_args = json.loads(message_from_llm.function_call.arguments or "{}")
                     if func_name == 'get_market_summary' and not fn_args.get('query'):
                          logger.warning(f"LLM called {func_name} without query arg. Using user message as query.")
                          fn_args = {"query": user_message}
                 except json.JSONDecodeError:
-                    logger.error(f"Failed to parse arguments for function {func_name}: {message_from_llm['function_call']['arguments']}")
+                    logger.error(f"Failed to parse arguments for function {func_name}: {message_from_llm.function_call.arguments}")
                     raise ValueError(f"Invalid arguments for function {func_name}")
                 
                 if func_name not in COMMANDS:
@@ -350,13 +373,14 @@ class TradingBot(commands.Bot):
                         "content": json.dumps(fn_result, ensure_ascii=False)
                     }]
                     second_messages = filter_messages_for_model(settings.LLM_MAIN_TIER_MODEL, second_raw_messages)
-                    second_resp = await loop.run_in_executor(None, lambda: azure_chat_completion(
-                        deployment=settings.LLM_MAIN_TIER_MODEL,
+                    second_completion = await openai_client.chat.completions.create(
+                        model=settings.LLM_MAIN_TIER_MODEL,
                         messages=second_messages,
-                        max_tokens=1000,
-                        temperature=0.7
-                    ))
-                    response_text = second_resp["choices"][0]["message"]["content"]
+                        **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
+                        **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
+                        # NOTE: Do not pass functions here, we want a direct answer now
+                    )
+                    response_text = second_completion.choices[0].message.content
                 else:
                     fallback_prompt = (
                         f"사용자 질문: {user_message}\n\n"
@@ -365,16 +389,16 @@ class TradingBot(commands.Bot):
                         f"이 데이터를 바탕으로 사용자 요청에 답변해 주세요."
                     )
                     logger.info(f"Using fallback completion for o4 model (session {llm_session_id}).")
-                    second_resp = await loop.run_in_executor(None, lambda: azure_chat_completion(
-                        deployment=settings.LLM_MAIN_TIER_MODEL,
+                    second_completion = await openai_client.chat.completions.create(
+                        model=settings.LLM_MAIN_TIER_MODEL,
                         messages=[
                             {"role": "system", "content": "당신은 금융 정보를 요약하고 설명하는 도우미입니다."},
                             {"role": "user", "content": fallback_prompt}
                         ],
-                        max_tokens=1000,
-                        temperature=0.7
-                    ))
-                    response_text = second_resp["choices"][0]["message"]["content"]
+                        **get_temperature_param(settings.LLM_MAIN_TIER_MODEL, 0.7),
+                        **get_token_param(settings.LLM_MAIN_TIER_MODEL, 1000),
+                    )
+                    response_text = second_completion.choices[0].message.content
                 logger.info(f"Received final response from OpenAI after function call (session {llm_session_id}).")
 
             # --- Order Parsing (applies to final response_text) --- 
@@ -408,12 +432,15 @@ class TradingBot(commands.Bot):
             else:
                  response_text = "(AI가 빈 응답을 반환했습니다.)"
 
-        except requests.HTTPError as e:
-            logger.error(f"Azure OpenAI API Error: {e}", exc_info=True)
-            response_text = f"(API 오류 발생: {e})"
+        except RateLimitError as e:
+             logger.error(f"OpenAI Rate Limit Exceeded: {e}")
+             response_text = "(현재 요청량이 많아 잠시 후 다시 시도해주세요.)"
+        except APIError as e:
+             logger.error(f"OpenAI API Error: {e}")
+             response_text = f"(API 오류 발생: {e})"
         except Exception as e:
-            logger.error(f"Unexpected error during Azure OpenAI interaction or function execution: {e}", exc_info=True)
-            response_text = "(AI 응답 생성 또는 내부 명령 실행 중 오류가 발생했습니다.)"
+             logger.error(f"Unexpected error interacting with OpenAI or executing function: {e}", exc_info=True)
+             response_text = "(AI 응답 생성 또는 내부 명령 실행 중 오류가 발생했습니다.)"
              
         # Return final response, order, debug info, finish reason, and function name
         return response_text, suggested_order, debug_info, finish_reason, func_name, func_args, func_result
