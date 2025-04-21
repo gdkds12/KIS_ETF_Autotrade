@@ -1,8 +1,8 @@
+from __future__ import annotations
 import logging
 import discord
 from discord.ext import commands
 from discord import Embed
-from discord.message import Message
 from datetime import datetime, timezone
 from typing import Any
 from src.config import settings
@@ -415,13 +415,13 @@ class TradingBot(commands.Bot):
         # Return final response, order, debug info, finish reason, and function name
         return response_text, suggested_order, debug_info, finish_reason, func_name, func_args, func_result
 
-    async def on_message(self, message: Message):
+    async def on_message(self, message: discord.Message):
         # Ignore messages from the bot itself
         if message.author == self.user:
             return
         
         # Check if the message is in an active trade session thread
-        if isinstance(message.channel, Thread) and message.channel.id in self.active_sessions:
+        if isinstance(message.channel, discord.Thread) and message.channel.id in self.active_sessions:
             session_info = self.active_sessions[message.channel.id]
             user_id = session_info['user_id']
             
@@ -529,7 +529,7 @@ class TradingBot(commands.Bot):
             for thread_id in sessions_to_archive:
                 try:
                     thread = self.get_channel(thread_id) or await self.fetch_channel(thread_id)
-                    if isinstance(thread, Thread) and not thread.archived:
+                    if isinstance(thread, discord.Thread) and not thread.archived:
                         logger.info(f"Archiving inactive session thread: {thread_id}")
                         # --- Summarization (using MemoryRAG) --- 
                         try:
