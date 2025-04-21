@@ -14,6 +14,7 @@ from src.utils.registry import set_orchestrator
 from src.utils.discord_utils import DiscordRequestType
 from src.discord.utils import send_discord_request
 import asyncio
+from qdrant_client import QdrantClient
 
 logger = logging.getLogger(__name__)
 
@@ -51,10 +52,17 @@ class TradingBot(commands.Bot):
                 acnt_prdt_cd=settings.ACNT_PRDT
             )
 
+            # Qdrant client 인스턴스 생성
+            qdrant_client = QdrantClient(
+                url=settings.QDRANT_URL,
+                api_key=settings.QDRANT_API_KEY
+            )
+
             # Orchestrator 초기화
             orchestrator = Orchestrator(
                 broker=broker,
-                db_session_factory=self.db_session_factory
+                db_session_factory=self.db_session_factory,
+                qdrant_client=qdrant_client
             )
             set_orchestrator(orchestrator)
             logger.info("Orchestrator initialized and connected.")
