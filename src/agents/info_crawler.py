@@ -53,6 +53,7 @@ class InfoCrawler:
                 messages=messages,
                 **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.0),
                 **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 100)
+            )
     
             translation = resp.choices[0].message.content.strip()
             logger.info(f"Translated query to English: {translation}")
