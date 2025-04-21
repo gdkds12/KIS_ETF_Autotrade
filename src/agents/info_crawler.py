@@ -90,6 +90,7 @@ class InfoCrawler:
                 **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.0),
                 **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 100)
             )
+
     
             translation = resp.choices[0].message.content.strip()
             logger.info(f"Translated query to English: {translation}")
@@ -138,7 +139,7 @@ class InfoCrawler:
                 ],
                 **get_temperature_param(model_name, 0.3),
                 **get_token_param(model_name, 500),
-            )
+    
             summary = resp.choices[0].message.content.strip()
             logger.info("Received summary from OpenAI.")
             return summary
