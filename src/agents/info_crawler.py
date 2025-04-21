@@ -84,18 +84,18 @@ class InfoCrawler:
             logger.warning("Empty query for web search.")
             return []
         # Debug: verify API credentials
-        if not settings.GOOGLE_API_KEY or not settings.GOOGLE_CX:
-            logger.error("Google CSE credentials missing. Set GOOGLE_API_KEY and GOOGLE_CX in .env.")
-            return []
+        # 하드코딩된 구글 API 키와 CX
+        GOOGLE_API_KEY = "AIzaSyDWYfYVGV5BhLYM0di2XX0LiDaWrCG5TYg"
+        GOOGLE_CX = "642d90dd10cdf4aec"
         url = "https://www.googleapis.com/customsearch/v1"
         params = {
-            "key": settings.GOOGLE_API_KEY,
-            "cx": settings.GOOGLE_CX,
+            "key": GOOGLE_API_KEY,
+            "cx": GOOGLE_CX,
             "q": query,
             "num": num_results
         }
         logger.debug(f"search_web: Sending request to {url} with params {params}")
-        logger.debug(f"search_web: env GOOGLE_API_KEY prefix={settings.GOOGLE_API_KEY[:4]}..., GOOGLE_CX={settings.GOOGLE_CX}")
+        logger.debug(f"search_web: using HARDCODED GOOGLE_API_KEY prefix={GOOGLE_API_KEY[:4]}..., GOOGLE_CX={GOOGLE_CX}")
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
             resp = requests.get(url, params=params, headers=headers, timeout=10)
