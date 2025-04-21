@@ -19,7 +19,6 @@ from src.utils.registry import set_orchestrator
 from src.utils.discord_utils import DiscordRequestType
 from src.discord.utils import send_discord_request
 import asyncio
-import azure
 from src.utils.azure_openai import azure_chat_completion  # REST-based AI chat support
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
