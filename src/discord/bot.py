@@ -223,6 +223,7 @@ class TradeCog(commands.Cog):
                 history,
                 1000,
                 0.5
+                # 두 번째 호출에는 functions/function_call 파라미터를 넘기지 않음
             )
             final_answer = resp2["choices"][0]["message"]["content"]
             await message.channel.send(final_answer)
