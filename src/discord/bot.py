@@ -95,22 +95,27 @@ class TradeCog(commands.Cog):
             'llm_session_id': session_uuid
         }
 
-        # 안내 임베드 메시지 생성
-    embed = Embed(
-        title="📢 트레이딩 세션 시작 안내",
-        description=(
-            f"{user.mention}님, 새로운 트레이딩 세션이 시작되었습니다!\n\n"
-            "아래 명령어와 버튼을 통해 주문을 생성, 확인, 실행할 수 있습니다.\n"
-            "- `/confirm_order` : 주문 확인 및 실행\n"
-            "- `/balance` : 계좌 잔고 조회\n\n"
-            "주문 실행/취소 시 반드시 안내 메시지와 버튼을 확인해 주세요."
-        ),
-        color=0x5865f2,
-        timestamp=datetime.now(timezone.utc)
-    )
-    embed.set_footer(text="KIS ETF Autotrade • Powered by AI", icon_url="https://cdn-icons-png.flaticon.com/512/4712/4712032.png")
-    await thread.send(embed=embed)
-    await interaction.response.send_message(f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}")
+        # 안내 임베드 메시지 생성 (들여쓰기 수정)
+        embed = Embed(
+            title="📢 트레이딩 세션 시작 안내",
+            description=(
+                f"{user.mention}님, 새로운 트레이딩 세션이 시작되었습니다!\n\n"
+                "아래 명령어와 버튼을 통해 주문을 생성, 확인, 실행할 수 있습니다.\n"
+                "- `/confirm_order` : 주문 확인 및 실행\n"
+                "- `/balance` : 계좌 잔고 조회\n\n"
+                "주문 실행/취소 시 반드시 안내 메시지와 버튼을 확인해 주세요."
+            ),
+            color=0x5865f2,
+            timestamp=datetime.now(timezone.utc)
+        )
+        embed.set_footer(
+            text="KIS ETF Autotrade • Powered by AI",
+            icon_url="https://cdn-icons-png.flaticon.com/512/4712/4712032.png"
+        )
+        await thread.send(embed=embed)
+        await interaction.response.send_message(
+            f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}"
+        )
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
