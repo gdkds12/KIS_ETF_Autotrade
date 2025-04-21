@@ -303,7 +303,7 @@ class TradingBot(commands.Bot):
         logger.info("Initializing Orchestrator...")
         try:
             # Initialize Finnhub Client
-            finnhub_client = FinnhubClient(api_key=settings.FINNHUB_API_KEY)
+            finnhub_client = FinnhubClient(token=settings.FINNHUB_API_KEY)
             logger.info("Finnhub client initialized successfully.")
 
             # Initialize MemoryRAG
