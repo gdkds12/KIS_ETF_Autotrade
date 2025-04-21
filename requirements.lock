@@ -33,7 +33,6 @@ alembic>=1.13.0,<1.14.0          # DB 마이그레이션
 
 # Financial / Trading APIs
 finnhub-python>=2.4.0,<2.5.0    # Finnhub 클라이언트
-kis-openapi>=0.3.0              # KIS OpenAPI 클라이언트 (가상)
 
 # LLM Integration
 openai>=1.17.0                 # OpenAI API
