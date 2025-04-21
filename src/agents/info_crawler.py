@@ -31,7 +31,7 @@ class InfoCrawler:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
-            resp = requests.get(url, headers=headers, timeout=7)
+            resp = requests.get(url, headers=headers, timeout=12)
             if resp.status_code != 200:
                 logger.warning(f"[fetch_article_text] HTTP {resp.status_code} for {url}")
                 return ""
@@ -82,7 +82,7 @@ class InfoCrawler:
                 "num": 10
             }
             logger.debug(f"[get_market_summary] Google API request params: {params}")
-            resp = requests.get(url, params=params, timeout=7)
+            resp = requests.get(url, params=params, timeout=12)
             logger.debug(f"[get_market_summary] Google API response status: {resp.status_code}")
             if resp.status_code == 200:
                 data = resp.json()
@@ -174,6 +174,8 @@ class InfoCrawler:
             f"You are a professional financial news summarizer. The current local time is {now_kst} (KST). "
             f"You will be given multiple news articles, each clearly delimited and labeled. "
             f"Summarize the following articles in Korean, providing a comprehensive and detailed summary. "
+            f"Sort the articles in order of recency (most recent first) based on their timestamps or context. "
+            f"Prioritize and highlight the most important and impactful news first. "
             f"Include all important facts and trends, and if possible, mention key points for each article. "
             f"Remove redundancy, but do not omit meaningful details. "
             f"Structure the summary so that even readers who have not seen the original articles can understand the overall market situation."
