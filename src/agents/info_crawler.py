@@ -167,7 +167,7 @@ class InfoCrawler:
             return f"(요약 불가: {e})"
 
     def get_market_summary(self, user_query: str, max_articles: int = 5) -> str:
-    logger.info(f"[get_market_summary] called with user_query={user_query!r} max_articles={max_articles}")
+        logger.info(f"[get_market_summary] called with user_query={user_query!r} max_articles={max_articles}")
         """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
         logger.info(f"Getting market summary for query: {user_query!r}")
         
