@@ -19,6 +19,7 @@ from src.utils.discord_utils import DiscordRequestType
 from src.discord.utils import send_discord_request
 import asyncio
 from qdrant_client import QdrantClient
+from src.utils.azure_openai import azure_chat_completion  # REST-based AI chat support
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +86,40 @@ class TradeCog(commands.Cog):
     async def confirm_order(self, interaction: Interaction, order_details: str):
         view = OrderConfirmationView(bot=self.bot, session_thread_id=interaction.channel.id, order_details=order_details)
         await interaction.response.send_message("주문을 확인하고 실행하려면 버튼을 눌러주세요.", view=view)
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        # AI chat in active session threads
+        if message.author.bot:
+            return
+        channel_id = message.channel.id
+        if channel_id not in self.bot.active_sessions:
+            return
+
+        session = self.bot.active_sessions[channel_id]
+        # Initialize or retrieve conversation history
+        history = session.get("history", [{"role": "system", "content": "You are a helpful trading assistant."}])
+        history.append({"role": "user", "content": message.content})
+
+        # Call REST-based AI agent asynchronously
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(
+            None,
+            azure_chat_completion,
+            settings.AZURE_OPENAI_DEPLOYMENT_GPT35,
+            history,
+            1000,
+            0.7
+        )
+        reply = resp["choices"][0]["message"]["content"]
+        history.append({"role": "assistant", "content": reply})
+
+        # Update session history
+        session["history"] = history
+        self.bot.active_sessions[channel_id] = session
+
+        # Send AI reply
+        await message.channel.send(reply)
 
 # 디스코드 봇 클래스 정의
 class TradingBot(commands.Bot):
