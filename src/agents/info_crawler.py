@@ -210,7 +210,7 @@ class InfoCrawler:
                 # 3. Fallback: all <p> tags joined
                 ps = soup.find_all('p')
                 if ps:
-                    text = ' '.join([p.get_text(separator=' ', strip=True') for p in ps])
+                    text = ' '.join([p.get_text(separator=' ', strip=True) for p in ps])
                     if len(text) > 200:
                         return text
                 return ""
