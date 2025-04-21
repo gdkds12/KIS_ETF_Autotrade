@@ -124,8 +124,33 @@ class InfoCrawler:
             logger.info(f"Searching web results for query: {eng_query!r}")
         else:
             logger.info("Searching general web results as no specific query provided.")
-        news_list = self.search_web(query=eng_query)
-        logger.info(f"[get_market_summary] news_list length: {len(news_list)}; first item: {news_list[0] if news_list else None}")
+        # Google 검색 API 직접 호출로 대체
+        logger.debug(f"[get_market_summary] Starting Google search for query: {eng_query}")
+        google_results = []
+        try:
+            url = "https://www.googleapis.com/customsearch/v1"
+            params = {
+                "key": settings.GOOGLE_API_KEY,
+                "cx": settings.GOOGLE_CX,
+                "q": eng_query,
+                "num": 10
+            }
+            logger.debug(f"[get_market_summary] Google API request params: {params}")
+            resp = requests.get(url, params=params, timeout=7)
+            logger.debug(f"[get_market_summary] Google API response status: {resp.status_code}")
+            if resp.status_code == 200:
+                data = resp.json()
+                google_results = data.get("items", [])
+                logger.info(f"[get_market_summary] Google search returned {len(google_results)} items.")
+                if google_results:
+                    logger.debug(f"[get_market_summary] First Google result: {google_results[0]}")
+            else:
+                logger.warning(f"[get_market_summary] Google search error: HTTP {resp.status_code}, content: {resp.text}")
+        except Exception as e:
+            logger.error(f"[get_market_summary] Google search exception: {e}", exc_info=True)
+        news_list = google_results
+        logger.info(f"[get_market_summary] Collected {len(news_list)} web results.")
+y] news_list length: {len(news_list)}; first item: {news_list[0] if news_list else None}")
         
         # Normalize news_list to a list to avoid slicing on non-list types
         if not isinstance(news_list, list):
@@ -272,7 +297,29 @@ class InfoCrawler:
             except Exception as e:
                 logger.error(f"Error fetching news for subquery '{q}': {e}", exc_info=True)
             try:
-                web_results = self.search_web(query=q)[:1]
+                web_results = []
+logger.debug(f"[multi_search.fetch] Google search for subquery: {q}")
+try:
+    url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        "key": settings.GOOGLE_API_KEY,
+        "cx": settings.GOOGLE_CX,
+        "q": q,
+        "num": 1
+    }
+    logger.debug(f"[multi_search.fetch] Google API request params: {params}")
+    resp = requests.get(url, params=params, timeout=7)
+    logger.debug(f"[multi_search.fetch] Google API response status: {resp.status_code}")
+    if resp.status_code == 200:
+        data = resp.json()
+        web_results = data.get("items", [])
+        logger.debug(f"[multi_search.fetch] Got {len(web_results)} results for subquery '{q}'")
+        if web_results:
+            logger.debug(f"[multi_search.fetch] First web result for '{q}': {web_results[0]}")
+    else:
+        logger.warning(f"[multi_search.fetch] Google search error: HTTP {resp.status_code}, content: {resp.text}")
+except Exception as e:
+    logger.error(f"Error fetching web results for subquery '{q}': {e}", exc_info=True)
             except Exception as e:
                 logger.error(f"Error fetching web results for subquery '{q}': {e}", exc_info=True)
             return (q, news_results, web_results)
