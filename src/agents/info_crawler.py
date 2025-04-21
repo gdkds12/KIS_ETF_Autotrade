@@ -96,10 +96,11 @@ class InfoCrawler:
         }
         logger.debug(f"search_web: Sending request to {url} with params {params}")
         try:
-            resp = requests.get(url, params=params, timeout=10)
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(url, params=params, headers=headers, timeout=10)
             # Handle non-200 responses (e.g., 403 Forbidden) gracefully
             if resp.status_code != 200:
-                logger.warning(f"Google Custom Search returned {resp.status_code} for query '{query}'. Skipping web search.")
+                logger.warning(f"Google Custom Search returned {resp.status_code} for query '{query}': {resp.text}")
                 return []
             logger.debug(f"search_web: Received HTTP {resp.status_code}")
             data = resp.json()
