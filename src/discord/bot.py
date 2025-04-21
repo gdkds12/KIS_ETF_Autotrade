@@ -5,6 +5,7 @@ import logging
 import traceback
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 # 서드파티 라이브러리
 import aiohttp
