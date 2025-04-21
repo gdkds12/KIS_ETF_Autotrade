@@ -180,7 +180,7 @@ class InfoCrawler:
             {"role": "system", "content": system_prompt_1},
             {"role": "user", "content": user_content_1}
         ]
-        resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO, messages=messages_1, max_tokens=800, temperature=0.3)
+        resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO, messages=messages_1, max_tokens=8000, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
         return first_summary
