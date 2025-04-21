@@ -180,10 +180,10 @@ class TradeCog(commands.Cog):
         from src.utils import registry
         # 모든 등록 함수의 function spec 추출
         functions = [fn._oas for fn in registry.COMMANDS.values() if hasattr(fn, '_oas')]
-        resp = await loop.run_in_executor(
-            None,
+        # 1st call: detect function_call via named args using functools.partial (workaround run_in_executor)
+        import functools
+        fn_call = functools.partial(
             azure_chat_completion,
-            # 반드시 named arguments로 전달 (인자 꼬임 방지)
             deployment=settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
             messages=history,
             max_tokens=1000,
@@ -191,7 +191,12 @@ class TradeCog(commands.Cog):
             functions=functions,
             function_call="auto"
         )
-
+        logger.debug(f"[on_message] 1st call azure_chat_completion kwargs: {fn_call.keywords}")
+        try:
+            resp = await loop.run_in_executor(None, fn_call)
+        except Exception as e:
+            logger.error(f"[on_message] azure_chat_completion error: {e}", exc_info=True)
+            raise
         assistant_msg = resp["choices"][0]["message"]
 
         # ---------- 함수 호출인지 확인 ----------
