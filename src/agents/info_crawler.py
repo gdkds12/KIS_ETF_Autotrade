@@ -95,6 +95,7 @@ class InfoCrawler:
             "num": num_results
         }
         logger.debug(f"search_web: Sending request to {url} with params {params}")
+        logger.debug(f"search_web: env GOOGLE_API_KEY prefix={settings.GOOGLE_API_KEY[:4]}..., GOOGLE_CX={settings.GOOGLE_CX}")
         try:
             headers = {"User-Agent": "Mozilla/5.0"}
             resp = requests.get(url, params=params, headers=headers, timeout=10)

@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from typing import Optional
 
 # .env 파일 로드 (프로젝트 루트에 있다고 가정)
-load_dotenv()
+load_dotenv(override=True)
 
 class Settings(BaseSettings):
     # KIS API Credentials
