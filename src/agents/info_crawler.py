@@ -171,9 +171,12 @@ class InfoCrawler:
         now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
         system_prompt_1 = (
-            f"You are a summarization expert. The current local time is {now_kst} (KST). "
+            f"You are a professional financial news summarizer. The current local time is {now_kst} (KST). "
             f"You will be given multiple news articles, each clearly delimited and labeled. "
-            f"Summarize the following articles in Korean, removing redundancy and focusing on the core facts."
+            f"Summarize the following articles in Korean, providing a comprehensive and detailed summary. "
+            f"Include all important facts and trends, and if possible, mention key points for each article. "
+            f"Remove redundancy, but do not omit meaningful details. "
+            f"Structure the summary so that even readers who have not seen the original articles can understand the overall market situation."
         )
         user_content_1 = '\n'.join(articles_for_prompt)
         messages_1 = [
