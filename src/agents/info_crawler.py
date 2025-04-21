@@ -72,22 +72,7 @@ class InfoCrawler:
             logger.error(f"[fetch_article_text] Error fetching article from {url}: {e}", exc_info=True)
             return ""
 
-    def _translate_to_en(self, text: str) -> str:
-        """Translate Korean text to English using Azure OpenAI."""
-        if not text:
-            return text
-        # If no Korean characters, return as-is
-        import re
-        if not re.search(r"[\uac00-\ud7a3]", text):
-            return text
-        try:
-            client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
-            messages = [
-                {"role": "system", "content": "You are a translator that translates Korean to English."},
-                {"role": "user", "content": f"Translate the following into English: {text}"}
-            ]
-            resp = client.chat.completions.create(
-                model=settings.LLM_LIGHTWEIGHT_TIER_MODEL,
+
                 messages=messages,
                 **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.0),
                 **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 100)
@@ -158,20 +143,19 @@ class InfoCrawler:
         logger.info(f"Getting market summary for query: {user_query!r}")
         
         # Fetch web results for the user query (web search only)
-        eng_query = self._translate_to_en(user_query) if user_query else ""
         if user_query:
-            logger.info(f"Searching web results for query: {eng_query!r}")
+            logger.info(f"Searching web results for query: {user_query!r}")
         else:
             logger.info("Searching general web results as no specific query provided.")
         # Google 검색 API 직접 호출로 대체
-        logger.debug(f"[get_market_summary] Starting Google search for query: {eng_query}")
+        logger.debug(f"[get_market_summary] Starting Google search for query: {user_query}")
         google_results = []
         try:
             url = "https://www.googleapis.com/customsearch/v1"
             params = {
                 "key": settings.GOOGLE_API_KEY,
                 "cx": settings.GOOGLE_CX,
-                "q": eng_query,
+                "q": user_query,
                 "num": 10
             }
             logger.debug(f"[get_market_summary] Google API request params: {params}")
@@ -244,118 +228,6 @@ class InfoCrawler:
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
         return first_summary
 
-    def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> dict:
-        """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
-        logger.info(f"Performing multi-search for query: '{query}' with {attempts} attempts (max {max_attempts})")
-        # 1) 시도 횟수 보정 (사용자 지정 attempts 반영, 1~max_attempts 범위)
-        tries = 1  # 임시: 한번만 검색 수행
-
-        # 2) 키워드 확장용 suffix 리스트 (attempts에 맞춰 다양한 suffix 사용)
-        suffixes = [
-            "최신 뉴스", "시장 동향", "분석", "전망", "이슈", "주요 토픽", "핫토픽"
-        ]
-        subqueries_set = {query}
-        for s in suffixes:
-            if len(subqueries_set) >= tries:
-                break
-            subqueries_set.add(f"{query} {s}")
-        subqueries = list(subqueries_set)
-        logger.debug(f"Generated {len(subqueries)} subqueries: {subqueries}")
-
-        # 3) ThreadPoolExecutor로 병렬 검색
-        def fetch(q):
-            """Helper function to fetch news and web results for a subquery."""
-            news_results = []
-            web_results = []
-            try:
-                # Note: Limiting results inside fetch, [:1]
-                news_results = []
-                # No need for sleep here if using ThreadPool
-            except Exception as e:
-                logger.error(f"Error fetching news for subquery '{q}': {e}", exc_info=True)
-            try:
-                web_results = []
-logger.debug(f"[multi_search.fetch] Google search for subquery: {q}")
-try:
-    url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        "key": settings.GOOGLE_API_KEY,
-        "cx": settings.GOOGLE_CX,
-        "q": q,
-        "num": 1
-    }
-    logger.debug(f"[multi_search.fetch] Google API request params: {params}")
-    resp = requests.get(url, params=params, timeout=7)
-    logger.debug(f"[multi_search.fetch] Google API response status: {resp.status_code}")
-    if resp.status_code == 200:
-        data = resp.json()
-        web_results = data.get("items", [])
-        logger.debug(f"[multi_search.fetch] Got {len(web_results)} results for subquery '{q}'")
-        if web_results:
-            logger.debug(f"[multi_search.fetch] First web result for '{q}': {web_results[0]}")
-    else:
-        logger.warning(f"[multi_search.fetch] Google search error: HTTP {resp.status_code}, content: {resp.text}")
-except Exception as e:
-    logger.error(f"Error fetching web results for subquery '{q}': {e}", exc_info=True)
-            except Exception as e:
-                logger.error(f"Error fetching web results for subquery '{q}': {e}", exc_info=True)
-            return (q, news_results, web_results)
-
-        snippets = []
-        # Use max_workers based on tries, but consider limiting it globally (e.g., max 10-15)
-        max_workers = min(tries * 2, 10) 
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            # Map queries to future objects
-            future_to_query = {pool.submit(fetch, q): q for q in subqueries}
-            for future in as_completed(future_to_query):
-                q = future_to_query[future]
-                try:
-                    _q, news, web = future.result() # q should match _q
-                    q_snippets = []
-                    if news:
-                        item = news[0]
-                        title = item.get("headline") or item.get("title") or ""
-                        desc = item.get("summary") or item.get("snippet") or ""
-                        q_snippets.append(f"- [뉴스] {q}: {title} ({desc})")
-                    if web:
-                        item = web[0]
-                        title = item.get('title') or ""
-                        desc = item.get('snippet') or ""
-                        q_snippets.append(f"- [웹] {q}: {title} ({desc})")
-                    if q_snippets:
-                        snippets.extend(q_snippets)
-                        
-                except Exception as exc:
-                    logger.error(f"Subquery '{q}' generated an exception: {exc}", exc_info=True)
-                    snippets.append(f"- [오류] '{q}' 처리 중 오류 발생: {exc}")
-        
-        # Ensure consistent sorting if needed, though as_completed yields in completion order
-        # snippets.sort() # Example if sorting is desired
-
-        if not snippets:
-            logger.warning(f"Multi-search for '{query}' yielded no results after parallel fetch.")
-            return {
-                "summary": "(관련 정보를 찾을 수 없습니다.)",
-                "subqueries_count": len(subqueries),
-                "snippets_count": 0
-            }
-
-        # 4) LLM 요약 프롬프트 구성
-        combined = "\n".join(snippets)
-        prompt = (
-            f"사용자가 요청한 주제: {query}\n\n"
-            f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
-            "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
-        )
-        logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
-        summary = self._summarize_with_llm(snippets, query)
-        
-        # Return a dictionary with summary and metadata
-        return {
-            "summary": summary,
-            "subqueries_count": len(subqueries),
-            "snippets_count": len(snippets)
-        }
 
  # Example Usage
 if __name__ == "__main__":
