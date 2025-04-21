@@ -301,26 +301,54 @@ class TradingBot(commands.Bot):
         # Initialize Orchestrator here and assign to config
         logger.info("Initializing Orchestrator...")
         try:
-            orchestrator = Orchestrator(
-                broker=KisBroker(
-                    app_key=settings.APP_KEY,
-                    app_secret=settings.APP_SECRET,
-                    base_url=(settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL),
-                    cano=settings.CANO,
-                    acnt_prdt_cd=settings.ACNT_PRDT,
-                    virtual_account=settings.KIS_VIRTUAL_ACCOUNT
-                ),
-                db_session_factory=SessionLocal,
+            # Initialize Finnhub Client
+            finnhub_client = FinnhubClient(api_key=settings.FINNHUB_API_KEY)
+            logger.info("Finnhub client initialized successfully.")
+
+            # Initialize MemoryRAG
+            memory_rag = MemoryRAG(
+                db_session_factory=self.db_session_factory,
                 qdrant_client=QdrantClient(
                     url=settings.QDRANT_URL,
-                    api_key=settings.QDRANT_API_KEY
-                )
+                    api_key=settings.QDRANT_API_KEY # API 키가 설정되어 있다면 전달
+                ),
+                llm_model=settings.LLM_SUMMARY_TIER_MODEL # Use summary model for RAG
             )
-            set_orchestrator(orchestrator)
+            logger.info(f"MemoryRAG initialized with DB factory, Qdrant, and LLM model: {settings.LLM_SUMMARY_TIER_MODEL}")
+
+            # Initialize KisBroker
+            broker = KisBroker(
+                app_key=settings.APP_KEY,
+                app_secret=settings.APP_SECRET,
+                base_url=(settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL),
+                cano=settings.CANO,
+                acnt_prdt_cd=settings.ACNT_PRDT,
+                virtual_account=settings.KIS_VIRTUAL_ACCOUNT
+            )
+            logger.info(f"KisBroker initialized for {'Virtual' if settings.KIS_VIRTUAL_ACCOUNT else 'Real'} Trading (URL: {settings.KIS_BASE_URL}).")
+
+            # Initialize Orchestrator with all components
+            logger.info("Initializing Orchestrator...")
+            orchestrator_instance = Orchestrator(
+                broker=broker,
+                db_session_factory=self.db_session_factory,
+                qdrant_client=QdrantClient(
+                    url=settings.QDRANT_URL,
+                    api_key=settings.QDRANT_API_KEY # API 키가 설정되어 있다면 전달
+                ),
+                finnhub_client=finnhub_client, # Pass finnhub client
+                memory_rag=memory_rag         # Pass memory rag
+            )
             logger.info("Orchestrator initialized successfully.")
+
+            # Assign the initialized orchestrator to the config module's variable
+            set_orchestrator(orchestrator_instance)
+            logger.info("Orchestrator instance assigned to config.ORCHESTRATOR")
+
         except Exception as e:
             logger.critical(f"Failed to initialize Orchestrator: {e}", exc_info=True)
-            exit() # Exit if orchestrator fails
+            # Consider exiting if orchestrator fails to initialize
+            # await self.close() # Or raise the exception to stop the bot
 
         # Cog 등록 (slash commands)
         await self.add_cog(TradeCog(self))
