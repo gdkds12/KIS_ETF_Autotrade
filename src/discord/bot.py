@@ -139,7 +139,7 @@ class TradeCog(commands.Cog):
             "- get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str): 과거 가격 데이터를 조회합니다.\n"
             "- order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell_code: str): 현금 주문을 실행합니다.\n"
             "- get_overseas_trading_status(): 해외 주식 거래 가능 여부를 확인합니다.\n"
-            "함수 호출 시, 웹 검색(search_web), 시장 요약(get_market_summary), 해외 종목/뉴스/웹 검색 등 해외 API로 쿼리를 보낼 때는 반드시 query 인자를 영어로 작성하세요.\n"
+            "함수 호출 시, 웹 검색(search_web), 시장 요약(get_market_summary), 해외 종목/웹 검색 등 해외 API로 쿼리를 보낼 때는 반드시 query 인자를 영어로 작성하세요.\n"
             "위 도구를 사용해야 할 때는 반드시 다음과 같은 JSON 형식으로 답변하세요:\n"
             '{"function": "<함수명>", "arguments": {...}}\n'
             "그 외에는 자연스럽게 한국어로 답변하세요."

@@ -81,21 +81,6 @@ def get_market_summary(query: str) -> str:
     return ORCHESTRATOR.info_crawler.get_market_summary(user_query=query) # Pass query here
 
 @command
-def search_news(query: str) -> list:
-    """Finnhub 기반 최신 뉴스 검색"""
-    if ORCHESTRATOR is None:
-        return []
-    try:
-        results = ORCHESTRATOR.info_crawler.search_news(query=query)
-        if not results:
-            logging.warning(f"search_news: Finnhub returned no results for '{query}', falling back to web search")
-            return ORCHESTRATOR.info_crawler.search_web(query=query)
-        return results
-    except Exception as e:
-        logging.error(f"search_news error for '{query}': {e}", exc_info=True)
-        return ORCHESTRATOR.info_crawler.search_web(query=query)
-
-@command
 def search_symbols(query: str) -> list:
     """KIS API로 종목/회사 검색 (query)."""
     if ORCHESTRATOR is None:
