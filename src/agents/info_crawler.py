@@ -78,7 +78,7 @@ class InfoCrawler:
             return []
 
     # New method to search symbols using requests
-    def search_web(self, query: str, num_results: int = 5) -> list[dict]:
+    def search_web(self, query: str, num_results: int = 10) -> list[dict]:
         """Google Custom Search JSON API를 이용한 일반 웹 검색"""
         if not query:
             logger.warning("Empty query for web search.")
@@ -230,12 +230,21 @@ class InfoCrawler:
             article_text = ""
             if url:
                 article_text = fetch_article_text(url)
+                if article_text and len(article_text) > 200:
+                    logger.info(f"[기사 {idx}] 본문 크롤링 성공 (길이: {len(article_text)}) | URL: {url}")
+                else:
+                    logger.info(f"[기사 {idx}] 본문 크롤링 실패 또는 너무 짧음 | URL: {url}")
+            else:
+                logger.info(f"[기사 {idx}] URL 없음, 본문 크롤링 생략")
             if article_text and len(article_text) > 200:
                 content = article_text
+                logger.debug(f"[기사 {idx}] 본문 사용")
             elif summary:
                 content = summary
+                logger.debug(f"[기사 {idx}] summary 사용")
             else:
                 content = headline
+                logger.debug(f"[기사 {idx}] headline만 사용")
             if headline or content:
                 articles_for_prompt.append(f"[기사 {idx}]\n제목: {headline.strip()}\n내용: {content.strip()}\nURL: {url if url else ''}\n---")
         if not articles_for_prompt:
@@ -258,24 +267,22 @@ class InfoCrawler:
         ]
         resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages_1, max_tokens=800, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
-        logger.info(f"Generated first-phase summary from {len(articles_for_prompt)} articles (length: {len(first_summary)}).")
+        logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
 
         # 2차 요약: 1차 요약 결과와 사용자 질문을 함께 LLM에 보내 최종 답변 생성
         system_prompt_2 = (
             f"You are a trading assistant. The current local time is {now_kst} (KST). "
             f"You will be given a summary of recent news articles. Answer the user's question below based on this summary, prioritizing recency and relevance. Answer in Korean."
         )
-        user_content_2 = f"요약된 뉴스:
-{first_summary}
-
-사용자 질문: {user_query}"
+        user_content_2 = f"요약된 뉴스:\n{first_summary}\n\n사용자 질문: {user_query}"
         messages_2 = [
             {"role": "system", "content": system_prompt_2},
             {"role": "user", "content": user_content_2}
         ]
+        logger.info("[요약] 2차(최종) 답변 생성 시작")
         resp_2 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages_2, max_tokens=800, temperature=0.3)
         final_answer = resp_2["choices"][0]["message"]["content"].strip()
-        logger.info(f"Generated final answer from summarized news (length: {len(final_answer)}).")
+        logger.info(f"[요약] 2차(최종) 답변 완료 (길이: {len(final_answer)})")
         return final_answer
 
 
