@@ -61,17 +61,6 @@ class InfoCrawler:
             logger.error(f"Translation failed: {e}", exc_info=True)
             return text
 
-    # New method to search news using Bing Grounding
-    def search_news(self, query: str = None, category: str = "general") -> list[dict]:
-        """
-        Finnhub API를 이용한 최신 뉴스 검색.
-        - `query` 가 주어지면 결과를 제목/요약에 포함된 키워드 기준으로 필터링한다.
-        """
-        # Delegated to web search only
-        # Using Google Custom Search for all queries
-        if not query:
-            return []
-        return self.search_web(query=query)
 
     # New method to search symbols using requests
     def search_web(self, query: str, num_results: int = 10) -> list[dict]:
@@ -189,40 +178,34 @@ class InfoCrawler:
 
         # 1차 요약: 각 기사별 핵심 요약 수행 (경량 LLM)
         articles_for_prompt = []
-        import requests
-        from bs4 import BeautifulSoup
-        def fetch_article_text(url):
-            try:
-                resp = requests.get(url, timeout=7)
-                resp.raise_for_status()
-                soup = BeautifulSoup(resp.text, 'html.parser')
-                # Try to extract main content heuristically
-                # 1. Look for <article>
-                article_tag = soup.find('article')
-                if article_tag:
-                    return article_tag.get_text(separator=' ', strip=True)
-                # 2. Fallback: largest <div> by text length
-                divs = soup.find_all('div')
-                if divs:
-                    div = max(divs, key=lambda d: len(d.get_text()))
-                    if len(div.get_text()) > 200:
-                        return div.get_text(separator=' ', strip=True)
-                # 3. Fallback: all <p> tags joined
-                ps = soup.find_all('p')
-                if ps:
-                    text = ' '.join([p.get_text(separator=' ', strip=True) for p in ps])
-                    if len(text) > 200:
-                        return text
-                return ""
-            except Exception as e:
-                logger.warning(f"Failed to fetch article text from {url}: {e}")
-                return ""
+        def fetch_article_text_wrapper(url):
+            return self.fetch_article_text(url)
 
-        for idx, item in enumerate(news_list[:max_articles], 1):
-            headline = item.get("headline", "")
-            summary = item.get("summary", "") or item.get("snippet", "")
-            url = item.get("url") or item.get("link")
-            article_text = ""
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            # Map queries to future objects
+            future_to_url = {pool.submit(fetch_article_text_wrapper, url): url for url in [item.get("url") or item.get("link") for item in news_list[:max_articles]]}
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    article_text = future.result()
+                    if article_text:
+                        headline = next((item.get("headline", "") for item in news_list if item.get("url") == url or item.get("link") == url), "")
+                        summary = next((item.get("summary", "") or item.get("snippet", "") for item in news_list if item.get("url") == url or item.get("link") == url), "")
+                        articles_for_prompt.append({
+                            "headline": headline,
+                            "summary": summary,
+                            "article_text": article_text,
+                            "url": url
+                        })
+                except Exception as exc:
+                    logger.error(f"Subquery '{url}' generated an exception: {exc}", exc_info=True)
+                    articles_for_prompt.append({
+                        "headline": "",
+                        "summary": "",
+                        "article_text": "",
+                        "url": url
+                    })
+
             if url:
                 article_text = fetch_article_text(url)
                 if article_text and len(article_text) > 200:
@@ -326,7 +309,7 @@ class InfoCrawler:
             web_results = []
             try:
                 # Note: Limiting results inside fetch, [:1]
-                news_results = self.search_news(query=q)[:1]
+                news_results = []
                 # No need for sleep here if using ThreadPool
             except Exception as e:
                 logger.error(f"Error fetching news for subquery '{q}': {e}", exc_info=True)
