@@ -192,32 +192,54 @@ class InfoCrawler:
             logger.warning("No news fetched from Finnhub for market summary.")
             return "(최신 시장 뉴스를 가져올 수 없습니다.)"
 
-        # Extract headlines/summaries for the prompt
+        # 1차 요약: 각 기사별 핵심 요약 수행 (경량 LLM)
         snippets = []
-        for item in news_list[:max_articles]: # Limit articles used in prompt
+        for item in news_list[:max_articles]:
             headline = item.get("headline", "")
-            summary = item.get("summary", "") or item.get("source", "") # Use summary or source as fallback
+            summary = item.get("summary", "") or item.get("source", "")
             if headline or summary:
-                 snippets.append(f"- {headline.strip()} ({summary.strip()})" if headline and summary else f"- {headline.strip() or summary.strip()}")
-
+                snippets.append(f"- {headline.strip()} ({summary.strip()})" if headline and summary else f"- {headline.strip() or summary.strip()}")
         if not snippets:
             logger.warning("Could not extract usable snippets from fetched news.")
             return "(뉴스 내용을 처리할 수 없습니다.)"
-            
-        # Build the prompt using the fetched snippets and user query
-        combined_news = "\n".join(snippets)
-        prompt = (
-            f"사용자 질문: {user_query}\n\n"
-            f"최근 주요 뉴스 요약:\n"
-            f"{combined_news}\n\n"
-            f"위 뉴스를 바탕으로 사용자 질문 '{user_query}'에 대해 한국어로 간결하게 답변해주세요."
-        )
-        logger.debug(f"Generated prompt for LLM summarization:\n{prompt}")
 
-        # Call the LLM summarization function with the generated prompt
-        llm_summary = self._summarize_with_llm(snippets, user_query)
-        logger.info(f"Generated market summary (length: {len(llm_summary)}).")
-        return llm_summary
+        # First-phase: item-level summary using lightweight model
+        item_summaries = []
+        for s in snippets:
+            # 1차 요약도 메인 LLM으로 처리 (경량 모델 미사용)
+            from src.utils.azure_openai import azure_chat_completion
+            import datetime, pytz
+            now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+            system_prompt1 = (
+                f"You are a trading assistant summarizing a single news snippet. The current local time is {now_kst} (KST). "
+                f"Summarize the following news snippet for the user query '{user_query}'."
+            )
+            messages1 = [
+                {"role": "system", "content": system_prompt1},
+                {"role": "user", "content": s}
+            ]
+            resp1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages1, max_tokens=200, temperature=0.3)
+            item_summary = resp1["choices"][0]["message"]["content"].strip()
+            item_summaries.append(item_summary)
+
+        # Second-phase: final summary using main LLM
+        combined_first = "\n".join([f"- {ms}" for ms in item_summaries])
+        from src.utils.azure_openai import azure_chat_completion
+        import datetime, pytz
+        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+        system_prompt2 = (
+            f"You are a trading assistant summarizing market news. The current local time is {now_kst} (KST). "
+            "Use the first-phase summaries below to generate a concise, relevant, and up-to-date final summary "
+            f"for the user query '{user_query}'."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt2},
+            {"role": "user", "content": combined_first}
+        ]
+        resp2 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages, max_tokens=500, temperature=0.3)
+        final_summary = resp2["choices"][0]["message"]["content"].strip()
+        logger.info(f"Generated final market summary (length: {len(final_summary)}).")
+        return final_summary
 
     def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> dict:
         """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
