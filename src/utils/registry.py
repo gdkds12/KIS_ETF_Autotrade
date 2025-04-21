@@ -153,33 +153,3 @@ def get_overseas_trading_status() -> dict:
         return {"error": "orchestrator not ready"}
     return ORCHESTRATOR.broker.get_overseas_status()
 
-# @command(
-#     name="search_news",
-#     description="Search for news articles related to a specific topic or company.",
-#     parameters=[
-#         {
-#             "name": "query",
-#             "description": "The topic or company name to search news for.",
-#             "type": "string",
-#             "required": True,
-#         },
-#         {
-#             "name": "days_back",
-#             "description": "How many days back to search for news. Defaults to 7.",
-#             "type": "integer",
-#             "required": False,
-#         }
-#     ],
-#     enabled=True,
-# )
-# def search_news(query: str, days_back: int = 7) -> str:
-#     """Searches for news articles.
-#
-#     Args:
-#         query: The search query.
-#         days_back: How many days back to search.
-#
-#     Returns:
-#         A summary of news articles.
-#     """
-#     return ORCHESTRATOR.info_crawler.search_news(query=query, days_back=days_back) 
