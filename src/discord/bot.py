@@ -319,14 +319,15 @@ class TradingBot(commands.Bot):
 
             # Initialize KisBroker
             broker = KisBroker(
-                app_key=settings.APP_KEY,
-                app_secret=settings.APP_SECRET,
-                base_url=(settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL),
-                cano=settings.CANO,
-                acnt_prdt_cd=settings.ACNT_PRDT,
-                virtual_account=settings.KIS_VIRTUAL_ACCOUNT
+                app_key=settings.APP_KEY, 
+                app_secret=settings.APP_SECRET, 
+                virtual_account=settings.KIS_VIRTUAL_ACCOUNT,
+                account_no=settings.CANO, 
+                account_prod_code=settings.ACNT_PRDT
             )
-            logger.info(f"KisBroker initialized for {'Virtual' if settings.KIS_VIRTUAL_ACCOUNT else 'Real'} Trading (URL: {settings.KIS_BASE_URL}).")
+            # Select the correct URL for logging based on the setting
+            active_kis_url = settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL
+            logger.info(f"KisBroker initialized for {'Virtual' if settings.KIS_VIRTUAL_ACCOUNT else 'Real'} Trading (URL: {active_kis_url}).")
 
             # Initialize Orchestrator with all components
             logger.info("Initializing Orchestrator...")
