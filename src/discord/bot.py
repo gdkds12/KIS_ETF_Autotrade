@@ -226,7 +226,10 @@ class TradeCog(commands.Cog):
                 return
 
             # 동기 함수 실행은 executor 로
-            result = await loop.run_in_executor(None, func, **args_dict)
+            # 키워드 인자를 functools.partial을 사용하여 함수에 바인딩
+            import functools
+            bound_func = functools.partial(func, **args_dict)
+            result = await loop.run_in_executor(None, bound_func)
             # content는 반드시 문자열이어야 함
             result_str = result if isinstance(result, str) else _json.dumps(result, ensure_ascii=False, default=str)
 
