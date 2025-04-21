@@ -100,22 +100,22 @@ class Orchestrator:
             logger.error(f"Error scheduling Discord notification for step {step} ({status}): {e}", exc_info=True)
             pass # Avoid crashing the orchestrator cycle due to notification failure
 
-    def __init__(self, broker: KisBroker, db_session_factory, qdrant_client: QdrantClient):
+    def __init__(self, broker: KisBroker, db_session_factory, qdrant_client: QdrantClient, finnhub_client: FinnhubClient, memory_rag: MemoryRAG):
         """Orchestrator 초기화
 
         Args:
             broker: KIS Broker 인스턴스
             db_session_factory: SQLAlchemy 세션 팩토리
             qdrant_client: Qdrant 클라이언트 인스턴스
+            finnhub_client: Finnhub 클라이언트 인스턴스
+            memory_rag: MemoryRAG 인스턴스
         """
         self.broker = broker
         self.kis = broker
         self.db_session_factory = db_session_factory
         self.qdrant_client = qdrant_client
-        self.llm_model_name = None # Store model name
-
-        # Initialize Finnhub Client
-        self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
+        self.finnhub_client = finnhub_client # Assign finnhub_client
+        self.memory_rag = memory_rag       # Assign memory_rag
 
         # Initialize OpenAI API Key
         if settings.AZURE_OPENAI_API_KEY:
@@ -127,7 +127,6 @@ class Orchestrator:
         # Initialize Agents
         # self.kis = KisDeveloper(account_info=settings.KIS_ACCOUNT) # Remove KisDeveloper instantiation
         self.info_crawler = InfoCrawler()
-        self.memory_rag = MemoryRAG(db_session_factory=self.db_session_factory) # Pass factory
         # Define target symbols - should ideally come from a dynamic source or config
         target_etfs = settings.TARGET_SYMBOLS # Use symbols from config
         # Strategy is now simplified or used differently, initialized later if needed
@@ -483,7 +482,7 @@ class Orchestrator:
                  context = "No relevant past context found."
             return context.strip()
         except Exception as e:
-             logger.error(f"MemoryRAG search failed: {e}", exc_info=True)
+             logger.error(f"Memory RAG search failed: {e}", exc_info=True)
              return "Error retrieving context from memory."
 
     @kis_retry_decorator
