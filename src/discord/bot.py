@@ -36,12 +36,16 @@ class TradingBot(commands.Bot):
         # Orchestrator 초기화 및 등록
         await self._initialize_orchestrator()
 
-        # Register slash commands
-        self.tree.add_command(self.trade)
-        self.tree.add_command(self.market_summary)
-        self.tree.add_command(self.confirm_order)
-        await self.tree.sync()
-        logger.info(f"Logged in as {self.user} (ID: {self.user.id})")
+        # GUILD_ID를 이용해 즉시 명령어 반영
+        GUILD_ID = 1363088557517967582
+        guild = discord.Object(id=GUILD_ID)
+
+        # Register slash commands (guild-specific for instant update)
+        self.tree.add_command(self.trade, guild=guild)
+        self.tree.add_command(self.market_summary, guild=guild)
+        self.tree.add_command(self.confirm_order, guild=guild)
+        await self.tree.sync(guild=guild)
+        logger.info(f"[GUILD {GUILD_ID}] Logged in as {self.user} (ID: {self.user.id})")
         logger.info("Bot is ready.")
 
     async def _initialize_orchestrator(self):
