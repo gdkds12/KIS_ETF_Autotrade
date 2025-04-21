@@ -1,11 +1,11 @@
 import logging
 import uuid
 from datetime import datetime, timezone
+import discord  # import discord module itself for Intents and submodules
+from discord import ButtonStyle, ui  # ButtonStyle and ui module
+from discord.ui import View, Button  # View and Button for UI components
 from discord.ext import commands
 from discord import Interaction, Embed
-from discord import ui
-from discord import ButtonStyle
-from discord.ui import View, Button
 from src.config import settings
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
