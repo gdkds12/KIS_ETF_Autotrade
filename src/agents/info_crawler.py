@@ -75,11 +75,13 @@ class InfoCrawler:
         google_results = []
         try:
             url = "https://www.googleapis.com/customsearch/v1"
+            from datetime import datetime, timedelta
             params = {
                 "key": settings.GOOGLE_API_KEY,
                 "cx": settings.GOOGLE_CX,
                 "q": user_query,
-                "num": 10
+                "num": 10,
+                "dateRestrict": "d7"  # 최근 7일 이내 결과
             }
             logger.debug(f"[get_market_summary] Google API request params: {params}")
             resp = requests.get(url, params=params, timeout=12)
