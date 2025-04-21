@@ -62,48 +62,6 @@ class InfoCrawler:
             return text
 
 
-    # New method to search symbols using requests
-    def search_web(self, query: str, num_results: int = 10) -> list[dict]:
-        """Google Custom Search JSON API를 이용한 일반 웹 검색"""
-        if not query:
-            logger.warning("Empty query for web search.")
-            return []
-        # Debug: verify API credentials
-        if not settings.GOOGLE_API_KEY or not settings.GOOGLE_CX:
-            logger.error("Google CSE credentials missing. Set GOOGLE_API_KEY and GOOGLE_CX in .env.")
-            return []
-        url = "https://www.googleapis.com/customsearch/v1"
-        params = {
-            "key": settings.GOOGLE_API_KEY,
-            "cx": settings.GOOGLE_CX,
-            "q": query,
-            "num": num_results
-        }
-        logger.debug(f"search_web: Sending request to {url} with params {params}")
-        logger.debug(f"search_web: env GOOGLE_API_KEY prefix={settings.GOOGLE_API_KEY[:4]}..., GOOGLE_CX={settings.GOOGLE_CX}")
-        try:
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(url, params=params, headers=headers, timeout=10)
-            # Handle non-200 responses (e.g., 403 Forbidden) gracefully
-            if resp.status_code != 200:
-                logger.warning(f"Google Custom Search returned {resp.status_code} for query '{query}': {resp.text}")
-                return []
-            logger.debug(f"search_web: Received HTTP {resp.status_code}")
-            data = resp.json()
-            items = data.get("items", [])
-            logger.debug(f"search_web: Retrieved {len(items)} items")
-            results = []
-            for item in items:
-                results.append({
-                    "title": item.get("title"),
-                    "link": item.get("link"),
-                    "snippet": item.get("snippet")
-                })
-            return results
-        except Exception as e:
-            logger.error(f"Google Custom Search error for query '{query}': {e}", exc_info=True)
-            return []
-             
     def _summarize_with_llm(self, snippets, query):
         """LLM을 사용하여 수집된 스니펫을 요약합니다."""
         if not snippets:

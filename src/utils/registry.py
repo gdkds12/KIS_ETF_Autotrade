@@ -92,22 +92,13 @@ def search_symbols(query: str) -> list:
     results = broker.search_symbol(query=query, is_foreign=is_foreign)
     if results:
         return results
-    # fallback: 기존 InfoCrawler 검색
+    # fallback: InfoCrawler의 get_market_summary 사용
     if hasattr(ORCHESTRATOR, 'info_crawler'):
-        return ORCHESTRATOR.info_crawler.search_web(query=query)
+        return ORCHESTRATOR.info_crawler.get_market_summary(user_query=query)
     return []
 
 @command
-def search_web(query: str) -> list[dict]:
-    """Google Custom Search API 기반 일반 웹 검색"""
-    if ORCHESTRATOR is None:
-        return []
-    # Google Custom Search API 기반 검색으로 대체
-    try:
-        return ORCHESTRATOR.info_crawler.search_web(query=query)
-    except Exception as e:
-        logging.error(f"Google Custom Search API search failed: {e}")
-        return []
+
 
 @command
 def multi_search(query: str, attempts: str = "3") -> dict:
