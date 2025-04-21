@@ -29,6 +29,29 @@ class TradeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    @app_commands.command(name="balance", description="현재 계좌의 잔고(예수금, 총자산 등)를 조회합니다.")
+    async def balance(self, interaction: Interaction):
+        orchestrator = self.bot.get_orchestrator()
+        if not orchestrator:
+            await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
+            return
+        try:
+            balance = orchestrator.broker.get_balance()
+            # 예시: 주요 정보만 Embed로 표시
+            embed = Embed(
+                title="💰 계좌 잔고",
+                color=0x2ecc71,
+                timestamp=datetime.now(timezone.utc)
+            )
+            embed.add_field(name="예수금", value=f"{balance.get('available_cash', 'N/A'):,}원", inline=False)
+            embed.add_field(name="총자산", value=f"{balance.get('total_asset_value', 'N/A'):,}원", inline=False)
+            embed.add_field(name="총손익", value=f"{balance.get('total_pnl', 'N/A'):,}원", inline=False)
+            embed.add_field(name="총손익률", value=f"{balance.get('total_pnl_percent', 'N/A')}%", inline=False)
+            await interaction.response.send_message(embed=embed)
+        except Exception as e:
+            logger.error(f"/balance command error: {e}", exc_info=True)
+            await interaction.response.send_message(f"잔고 조회 중 오류가 발생했습니다: {e}")
+
     @app_commands.command(name="trade", description="새로운 트레이딩 세션을 시작합니다.")
     async def trade(self, interaction: Interaction):
         user = interaction.user
