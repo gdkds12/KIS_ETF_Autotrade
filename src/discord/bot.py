@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 # 디스코드 봇 클래스 정의
 class TradingBot(commands.Bot):
     def __init__(self):
-        super().__init__(intents=self._get_intents())  # Remove command_prefix for slash-only
+        super().__init__(command_prefix="!", intents=self._get_intents())  # command_prefix is required by BotBase
         self.db_session_factory = SessionLocal
         self.active_sessions = {}  # 세션 추적을 위한 저장소
 
