@@ -3,6 +3,9 @@ import uuid
 from datetime import datetime, timezone
 from discord.ext import commands
 from discord import Interaction, Embed
+from discord import ui
+from discord import ButtonStyle
+from discord.ui import View, Button
 from src.config import settings
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
@@ -136,7 +139,7 @@ class TradingBot(commands.Bot):
         return ORCHESTRATOR
 
 # 주문 확인 버튼을 위한 View 클래스
-class OrderConfirmationView(discord.ui.View):
+class OrderConfirmationView(View):
     def __init__(self, bot: TradingBot, session_thread_id: int, order_details: str):
         super().__init__(timeout=60 * 10)  # 10분 동안 유효
         self.bot = bot
@@ -144,8 +147,8 @@ class OrderConfirmationView(discord.ui.View):
         self.order_details = order_details
         self.confirmed = False
 
-    @discord.ui.button(label="✅ 주문 실행", style=discord.ButtonStyle.green)
-    async def confirm_button(self, interaction: Interaction, button: discord.ui.Button):
+    @ui.button(label="✅ 주문 실행", style=ButtonStyle.green)
+    async def confirm_button(self, interaction: Interaction, button: Button):
         session_info = self.bot.active_sessions.get(self.session_thread_id)
         if not session_info or interaction.user.id != session_info['user_id']:
             await interaction.response.send_message("세션을 시작한 사용자만 주문을 실행할 수 있습니다.", ephemeral=True)
@@ -162,8 +165,8 @@ class OrderConfirmationView(discord.ui.View):
 
         # 여기에 주문 실행 로직을 추가합니다. (예: KIS API 호출)
 
-    @discord.ui.button(label="❌ 취소", style=discord.ButtonStyle.red)
-    async def cancel_button(self, interaction: Interaction, button: discord.ui.Button):
+    @ui.button(label="❌ 취소", style=ButtonStyle.red)
+    async def cancel_button(self, interaction: Interaction, button: Button):
         session_info = self.bot.active_sessions.get(self.session_thread_id)
         if not session_info or interaction.user.id != session_info['user_id']:
             await interaction.response.send_message("세션을 시작한 사용자만 취소할 수 있습니다.", ephemeral=True)
