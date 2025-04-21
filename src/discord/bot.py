@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import json
 import asyncio
 from typing import Any
+from src.db.models import SessionLocal
 from src.config import settings
 from src.discord.trading_bot import bot, run_discord_bot
 import src.discord.commands.registry_commands
