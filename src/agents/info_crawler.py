@@ -138,7 +138,7 @@ class InfoCrawler:
                 ],
                 **get_temperature_param(model_name, 0.3),
                 **get_token_param(model_name, 500),
-    
+            )
             summary = resp.choices[0].message.content.strip()
             logger.info("Received summary from OpenAI.")
             return summary
