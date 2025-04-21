@@ -53,7 +53,7 @@ class InfoCrawler:
                 messages=messages,
                 **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.0),
                 **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 100)
-            )
+    
             translation = resp.choices[0].message.content.strip()
             logger.info(f"Translated query to English: {translation}")
             return translation
@@ -88,7 +88,7 @@ class InfoCrawler:
                 "서로 모순되는 정보가 있으면 그 점을 명시하고, "
                 "날짜나 시간이 언급된 경우 가장 최신 정보에 더 가중치를 두세요. "
                 "가능한 한 객관적으로 정보를 요약하되, 명확한 추세가 보이면 결론도 포함하세요."
-            )
+    
             
             user_prompt = f"다음 정보를 바탕으로 '{query}'에 대해 요약해주세요:\n\n{combined_text}"
             
@@ -102,7 +102,7 @@ class InfoCrawler:
                 ],
                 **get_temperature_param(model_name, 0.3),
                 **get_token_param(model_name, 500),
-            )
+    
             summary = resp.choices[0].message.content.strip()
             logger.info("Received summary from OpenAI.")
             return summary
@@ -221,7 +221,7 @@ class InfoCrawler:
             f"You are a summarization expert. The current local time is {now_kst} (KST). "
             f"You will be given multiple news articles, each clearly delimited and labeled. "
             f"Summarize the following articles in Korean, removing redundancy and focusing on the core facts. Do not answer the user query yet."
-        )
+
         user_content_1 = '\n'.join(articles_for_prompt)
         messages_1 = [
             {"role": "system", "content": system_prompt_1},
@@ -235,7 +235,7 @@ class InfoCrawler:
         system_prompt_2 = (
             f"You are a trading assistant. The current local time is {now_kst} (KST). "
             f"You will be given a summary of recent news articles. Answer the user's question below based on this summary, prioritizing recency and relevance. Answer in Korean."
-        )
+
         user_content_2 = f"요약된 뉴스:\n{first_summary}\n\n사용자 질문: {user_query}"
         messages_2 = [
             {"role": "system", "content": system_prompt_2},
@@ -257,7 +257,7 @@ class InfoCrawler:
             f"You are a trading assistant summarizing market news. The current local time is {now_kst} (KST). "
             "Use the first-phase summaries below to generate a concise, relevant, and up-to-date final summary "
             f"for the user query '{user_query}'."
-        )
+
         messages = [
             {"role": "system", "content": system_prompt2},
             {"role": "user", "content": combined_first}
@@ -369,7 +369,7 @@ except Exception as e:
             f"사용자가 요청한 주제: {query}\n\n"
             f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
             "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
-        )
+
         logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
         summary = self._summarize_with_llm(snippets, query)
         
