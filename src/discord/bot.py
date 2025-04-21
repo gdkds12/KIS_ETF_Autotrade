@@ -183,12 +183,13 @@ class TradeCog(commands.Cog):
         resp = await loop.run_in_executor(
             None,
             azure_chat_completion,
-            settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
-            history,
-            1000,
-            0.7,
-            functions,
-            "auto"
+            # 반드시 named arguments로 전달 (인자 꼬임 방지)
+            deployment=settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
+            messages=history,
+            max_tokens=1000,
+            temperature=0.7,
+            functions=functions,
+            function_call="auto"
         )
 
         assistant_msg = resp["choices"][0]["message"]

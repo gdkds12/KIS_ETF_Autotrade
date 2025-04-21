@@ -43,7 +43,12 @@ def azure_chat_completion(
         payload["tool_choice"] = tool_choice
     elif function_call is not None:
         payload["function_call"] = function_call
+    logger.debug(f"[azure_chat_completion] 요청 payload: {payload}")
     response = requests.post(url, headers=headers, json=payload)
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except requests.exceptions.HTTPError as err:
+        logger.error("Azure 요청 에러: %s\n응답 바디: %s", err, response.text)
+        raise
     return response.json()
 
