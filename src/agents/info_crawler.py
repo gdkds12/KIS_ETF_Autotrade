@@ -60,7 +60,7 @@ class InfoCrawler:
             return ""
 
 
-    def get_market_summary(self, user_query: str, max_articles: int = 5) -> str:
+    def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
         logger.info(f"[get_market_summary] called with user_query={user_query!r} max_articles={max_articles}")
         """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
         logger.info(f"Getting market summary for query: {user_query!r}")
@@ -94,28 +94,60 @@ class InfoCrawler:
                 logger.warning(f"[get_market_summary] Google search error: HTTP {resp.status_code}, content: {resp.text}")
         except Exception as e:
             logger.error(f"[get_market_summary] Google search exception: {e}", exc_info=True)
-        news_list = google_results
-        logger.info(f"[get_market_summary] Collected {len(news_list)} web results.")
-        
-        # Normalize news_list to a list to avoid slicing on non-list types
-        if not isinstance(news_list, list):
-            news_list = []
-        # 방어: news_list가 None이거나 리스트가 아니면 빈 리스트 처리
-        if not news_list or not isinstance(news_list, list):
-            logger.warning("No web results fetched for market summary.")
+        # Google 뉴스 결과: 항상 10개 가져오기
+        google_news_list = google_results if isinstance(google_results, list) else []
+        google_news_list = google_news_list[:10]
+        logger.info(f"[get_market_summary] Collected {len(google_news_list)} Google web results.")
+
+        # Finnhub 일반 뉴스 결과: 10개만 사용
+        try:
+            finnhub_news_list = self.finnhub.get_general_news(category='general')
+            finnhub_news_list = finnhub_news_list[:10]
+            logger.info(f"[get_market_summary] Collected {len(finnhub_news_list)} Finnhub news results.")
+        except Exception as e:
+            logger.error(f"[get_market_summary] Finnhub news fetch error: {e}", exc_info=True)
+            finnhub_news_list = []
+
+        # 기사 병합 (중복 URL 제거)
+        url_set = set()
+        merged_news = []
+        # Google 뉴스: url, title/headline, snippet/summary
+        for item in google_news_list:
+            url = item.get('url') or item.get('link')
+            if url and url not in url_set:
+                url_set.add(url)
+                merged_news.append({
+                    'url': url,
+                    'headline': item.get('headline', '') or item.get('title', ''),
+                    'summary': item.get('summary', '') or item.get('snippet', '')
+                })
+        # Finnhub 뉴스: url, headline, summary (본문은 fetch_article_text로 크롤링)
+        for item in finnhub_news_list:
+            url = item.get('url', '')
+            if url and url not in url_set:
+                url_set.add(url)
+                merged_news.append({
+                    'url': url,
+                    'headline': item.get('headline', ''),
+                    'summary': item.get('summary', '')
+                })
+
+        logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
+        if not merged_news:
+            logger.warning("No news collected from Google or Finnhub.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
-        # 1차 요약: 각 기사별 핵심 요약 수행 (경량 LLM)
+        # 기사 본문 크롤링 및 요약 준비
         articles_for_prompt = []
-        urls = [item.get("url") or item.get("link") for item in news_list[:max_articles]]
+        urls = [item.get("url") for item in merged_news]
         with ThreadPoolExecutor(max_workers=10) as pool:
-            future_to_url = {pool.submit(self.fetch_article_text, url): url for url in urls}
+            future_to_url = {pool.submit(self.fetch_article_text, url): url for url in urls if url}
             for future in as_completed(future_to_url):
                 url = future_to_url[future]
                 try:
                     article_text = future.result()
-                    headline = next((item.get("headline", "") or item.get("title", "") for item in news_list if (item.get("url") == url or item.get("link") == url)), "")
-                    summary = next((item.get("summary", "") or item.get("snippet", "") for item in news_list if (item.get("url") == url or item.get("link") == url)), "")
+                    headline = next((item.get("headline", "") for item in merged_news if item.get("url") == url), "")
+                    summary = next((item.get("summary", "") for item in merged_news if item.get("url") == url), "")
                     # 기사 본문이 충분히 길면 본문, 아니면 summary/headline 사용
                     if article_text and len(article_text) > 200:
                         content = article_text
