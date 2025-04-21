@@ -97,7 +97,11 @@ def search_symbols(query: str) -> list:
     broker = ORCHESTRATOR.broker
     # 해외 여부 자동 감지
     is_foreign = broker.is_overseas_symbol(query)
-    results = broker.search_symbol(query=query, is_foreign=is_foreign)
+    # Try broker symbol search, fallback on missing method or error
+    try:
+        results = broker.search_symbol(query=query, is_foreign=is_foreign)
+    except Exception:
+        results = []
     if results:
         return results
     # fallback: 기존 InfoCrawler 검색
