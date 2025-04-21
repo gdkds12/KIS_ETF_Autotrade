@@ -6,8 +6,10 @@ def azure_chat_completion(
     messages: list[dict],
     max_tokens: int = None,
     temperature: float = None,
-    functions: list = None,           # 함수 시그니처 리스트 (OpenAI function calling)
-    function_call: str | dict = None  # "auto" 또는 {"name": ...}
+    tools: list = None,           # 🆕 최신 OpenAI tools 스펙
+    tool_choice: str | dict = None,  # 🆕 최신 OpenAI tools 스펙
+    functions: list = None,      # ← 구버전 호환
+    function_call: str | dict = None # ← 구버전 호환
 ) -> dict:
     """
     Send a chat completion request to Azure OpenAI using REST API.
@@ -16,8 +18,10 @@ def azure_chat_completion(
         messages: List of message dicts for chat.
         max_tokens: Maximum tokens for completion.
         temperature: Sampling temperature.
-        functions: List of function schemas (for function calling)
-        function_call: "auto" or {"name": ...} (function calling)
+        tools: List of tool schemas (for function calling, 최신)
+        tool_choice: "auto" or {"name": ...} (최신)
+        functions: List of function schemas (for function calling, 구버전)
+        function_call: "auto" or {"name": ...} (구버전)
     Returns:
         Parsed JSON response.
     """
@@ -31,9 +35,13 @@ def azure_chat_completion(
         payload["max_tokens"] = max_tokens
     if temperature is not None:
         payload["temperature"] = temperature
-    if functions is not None:
+    if tools is not None:
+        payload["tools"] = tools
+    elif functions is not None:
         payload["functions"] = functions
-    if function_call is not None:
+    if tool_choice is not None:
+        payload["tool_choice"] = tool_choice
+    elif function_call is not None:
         payload["function_call"] = function_call
     response = requests.post(url, headers=headers, json=payload)
     response.raise_for_status()

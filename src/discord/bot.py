@@ -194,11 +194,24 @@ class TradeCog(commands.Cog):
         assistant_msg = resp["choices"][0]["message"]
 
         # ---------- 함수 호출인지 확인 ----------
-        if assistant_msg.get("function_call"):
-            func_name = assistant_msg["function_call"]["name"]
-            import json as _json
-            args = _json.loads(assistant_msg["function_call"]["arguments"])
-            logger.info(f"[on_message] Detected function_call: {func_name} {args}")
+        import json as _json
+        tool_calls = assistant_msg.get("tool_calls")
+        function_call = assistant_msg.get("function_call")
+        if tool_calls or function_call:
+            if tool_calls:
+                # 최신 스펙 (role: tool/tool_call_id)
+                tool_call = tool_calls[0]
+                func_name = tool_call["function"].get("name") or tool_call.get("name")
+                args = tool_call.get("arguments")
+                tool_call_id = tool_call.get("id")
+                args_dict = _json.loads(args) if isinstance(args, str) else args
+            else:
+                # 구버전 (role: function)
+                func_name = function_call["name"]
+                args = function_call["arguments"]
+                tool_call_id = assistant_msg.get("id")
+                args_dict = _json.loads(args) if isinstance(args, str) else args
+            logger.info(f"[on_message] Detected function/tool_call: {func_name} {args_dict}")
 
             from src.utils import registry
             func = registry.COMMANDS.get(func_name)
@@ -207,24 +220,42 @@ class TradeCog(commands.Cog):
                 return
 
             # 동기 함수 실행은 executor 로
-            result = await loop.run_in_executor(None, func, **args)
+            result = await loop.run_in_executor(None, func, **args_dict)
+            # content는 반드시 문자열이어야 함
+            result_str = result if isinstance(result, str) else _json.dumps(result, ensure_ascii=False, default=str)
 
-            # assistant 호출 메시지 + function 결과 메시지를 history에 추가
-            history.extend([
-                assistant_msg,
-                {"role": "function", "name": func_name, "content": result}
-            ])
+            # assistant 호출 메시지 + tool/function 결과 메시지를 history에 추가
+            if tool_calls:
+                # 최신 스펙
+                history.extend([
+                    assistant_msg,
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": func_name,
+                        "content": result_str
+                    }
+                ])
+            else:
+                # 구버전
+                history.extend([
+                    assistant_msg,
+                    {
+                        "role": "function",
+                        "name": func_name,
+                        "content": result_str
+                    }
+                ])
 
             logger.debug(f"[on_message] 2nd call to azure_chat_completion (final answer)")
-            # 두 번째 호출에는 functions/function_call 인자 절대 전달하지 않음 (인자 순서 명확히)
+            # 두 번째 호출에는 tools/tool_choice/functions/function_call 인자 절대 전달하지 않음
             resp2 = await loop.run_in_executor(
                 None,
                 azure_chat_completion,
-                settings.AZURE_OPENAI_DEPLOYMENT_GPT4,  # deployment
-                history,                                 # messages
-                1000,                                    # max_tokens
-                0.5                                      # temperature
-                # functions/function_call 인자 없음!
+                settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
+                history,
+                1000,
+                0.5
             )
             final_answer = resp2["choices"][0]["message"]["content"]
             await message.channel.send(final_answer)
