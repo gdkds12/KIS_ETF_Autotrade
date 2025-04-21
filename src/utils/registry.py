@@ -156,21 +156,16 @@ def get_quote(symbol: str) -> str:
     Returns:
         The current quote information.
     """
-    # Ensure Orchestrator and KIS interface are available
     if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'kis'):
         return "(Orchestrator or KIS interface not ready)"
-    # Auto-detect foreign stock symbols
     is_foreign = ORCHESTRATOR.kis.is_overseas_symbol(symbol)
-    # Try KIS API first, fallback to Finnhub on error
-    try:
-        return ORCHESTRATOR.kis.get_quote(symbol=symbol, is_foreign=is_foreign)
-    except Exception as e:
-        logging.warning(f"KIS quote failed for {symbol}: {e}, falling back to Finnhub")
-        try:
-            return ORCHESTRATOR.info_crawler.finnhub.get_quote(symbol)
-        except Exception as e2:
-            logging.error(f"Finnhub fallback quote failed for {symbol}: {e2}")
-            return {"error": str(e2)}
+    if is_foreign:
+        # 해외 주식: Finnhub만 사용
+        return ORCHESTRATOR.info_crawler.finnhub.get_quote(symbol)
+    else:
+        # 국내 주식: KIS만 사용
+        return ORCHESTRATOR.kis.get_quote(symbol=symbol, is_foreign=False)
+
 
 @command
 def get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str) -> list:
