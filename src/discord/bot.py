@@ -313,9 +313,9 @@ class TradingBot(commands.Bot):
                     url=settings.QDRANT_URL,
                     api_key=settings.QDRANT_API_KEY # API 키가 설정되어 있다면 전달
                 ),
-                llm_model=settings.LLM_SUMMARY_TIER_MODEL # Use summary model for RAG
+                llm_model=settings.AZURE_OPENAI_DEPLOYMENT_GPT4 # Use summary model for RAG
             )
-            logger.info(f"MemoryRAG initialized with DB factory, Qdrant, and LLM model: {settings.LLM_SUMMARY_TIER_MODEL}")
+            logger.info(f"MemoryRAG initialized with DB factory, Qdrant, and LLM model: {settings.AZURE_OPENAI_DEPLOYMENT_GPT4}")
 
             # Initialize KisBroker
             broker = KisBroker(
