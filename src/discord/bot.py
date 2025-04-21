@@ -123,7 +123,15 @@ class TradeCog(commands.Cog):
         if not orchestrator:
             await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
             return
-        market_summary = await orchestrator.info_crawler.get_market_summary(query)
+
+        # get_market_summary() 는 동기 함수이므로 블로킹 방지
+        import asyncio
+        loop = asyncio.get_running_loop()
+        market_summary = await loop.run_in_executor(
+            None,
+            orchestrator.info_crawler.get_market_summary,
+            query
+        )
         embed = Embed(
             title="📊 시장 동향",
             description=market_summary,
@@ -167,8 +175,7 @@ class TradeCog(commands.Cog):
         }])
         history.append({"role": "user", "content": message.content})
 
-        logger.debug(f"[on_message] Calling azure_chat_completion with deployment={settings.AZURE_OPENAI_DEPLOYMENT_GPT4!r} and history length={len(history)}")
-        # Call REST-based AI agent asynchronously
+        logger.debug(f"[on_message] 1st call to azure_chat_completion (detect function_call)")
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
@@ -178,66 +185,56 @@ class TradeCog(commands.Cog):
             1000,
             0.7
         )
-        logger.debug(f"[on_message] azure_chat_completion response: {resp}")
 
-        reply = resp["choices"][0]["message"]["content"]
-        history.append({"role": "assistant", "content": reply})
+        assistant_msg = resp["choices"][0]["message"]
 
-        # Update session history
+        # ---------- 함수 호출인지 확인 ----------
+        if assistant_msg.get("function_call"):
+            func_name = assistant_msg["function_call"]["name"]
+            import json as _json
+            args = _json.loads(assistant_msg["function_call"]["arguments"])
+            logger.info(f"[on_message] Detected function_call: {func_name} {args}")
+
+            from src.utils import registry
+            func = registry.COMMANDS.get(func_name)
+            if not func:
+                await message.channel.send(f"알 수 없는 함수 호출: {func_name}")
+                return
+
+            # 동기 함수 실행은 executor 로
+            result = await loop.run_in_executor(None, func, **args)
+
+            # assistant 호출 메시지 + function 결과 메시지를 history에 추가
+            history.extend([
+                assistant_msg,
+                {"role": "function", "name": func_name, "content": result}
+            ])
+
+            logger.debug(f"[on_message] 2nd call to azure_chat_completion (final answer)")
+            resp2 = await loop.run_in_executor(
+                None,
+                azure_chat_completion,
+                settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
+                history,
+                1000,
+                0.5
+            )
+            final_answer = resp2["choices"][0]["message"]["content"]
+            await message.channel.send(final_answer)
+
+            # 대화 이력 저장
+            history.append({"role": "assistant", "content": final_answer})
+        else:
+            # 함수 호출이 아니면 바로 내용 출력
+            content = assistant_msg.get("content", "")
+            history.append(assistant_msg)
+            await message.channel.send(content)
+
+        # Update session history & last touch
         session["history"] = history
+        session["last_interaction_time"] = datetime.now()
         self.bot.active_sessions[channel_id] = session
-
-        import json
-        from src.utils import registry
-        logger.debug(f"[on_message] Checking if reply is function call JSON: {reply}")
-        try:
-            parsed = json.loads(reply)
-            if isinstance(parsed, dict) and "function" in parsed and "arguments" in parsed:
-                func_name = parsed["function"]
-                args = parsed["arguments"]
-                logger.info(f"[on_message] Detected function call: {func_name} with args {args}")
-                func = registry.COMMANDS.get(func_name)
-                if func:
-                    result = func(**args)
-                    logger.info(f"[on_message] Function {func_name} executed, result: {result}")
-                    # 함수 실행 결과를 assistant 메시지로 history에 추가
-                    history.append({"role": "assistant", "content": f"[{func_name} 실행 결과]\n{result}"})
-                    session["history"] = history
-                    self.bot.active_sessions[channel_id] = session
-                    logger.debug(f"[on_message] Calling LLM again to summarize function result.")
-                    # 함수 실행 결과를 요약하도록 LLM 재호출
-                    now_kst = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
-                    history.append({"role": "system", "content":
-                        f"You are a trading assistant for Korean ETF and global stock investors. "
-                        f"The current local time is {now_kst}. The local time zone is Asia/Seoul (KST, UTC+9). Always use this time and time zone for all date/time reasoning, news relevance, and when presenting or interpreting dates and times for the user, unless otherwise specified. "
-                        "When calling any function related to market summary or overseas API, always generate query arguments in English. "
-                        "If a user asks for news, always use the latest information available. "
-                        "If you need to translate a query for an overseas API, do so automatically. "
-                        "If a function call is required, always provide the most relevant arguments. "
-                        "If you summarize news or data, always note the date and time of the information. "
-                        "If a user asks for market status, always clarify which market and time zone you are referring to. "
-                        "If you do not know the answer, say so honestly."
-                    })
-                    resp2 = await loop.run_in_executor(
-                        None,
-                        azure_chat_completion,
-                        settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
-                        history,
-                        1000,
-                        0.7
-                    )
-                    summary = resp2["choices"][0]["message"]["content"]
-                    logger.debug(f"[on_message] LLM summary: {summary}")
-                    await message.channel.send(summary)
-                else:
-                    logger.warning(f"[on_message] Unknown function call: {func_name}")
-                    await message.channel.send(f"알 수 없는 함수 호출: {func_name}")
-            else:
-                await message.channel.send(reply)
-        except Exception as e:
-            logger.warning(f"[on_message] Exception in function call parsing/execution: {e}")
-            await message.channel.send(reply)
-        logger.debug(f"[on_message] on_message handler finished.")
+        logger.debug(f"[on_message] handler finished.")
 
 # 디스코드 봇 클래스 정의
 class TradingBot(commands.Bot):
