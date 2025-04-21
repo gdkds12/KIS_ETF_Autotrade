@@ -61,13 +61,12 @@ class InfoCrawler:
 
 
     def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
-        logger.info(f"[get_market_summary] called with user_query={user_query!r} max_articles={max_articles}")
-        """사용자 질의(user_query)에 대한 시장 동향을 Finnhub 뉴스 기반으로 요약해서 반환"""
-        logger.info(f"Getting market summary for query: {user_query!r}")
+        logger.info(f"[get_market_summary] called with user_query='{user_query}' max_articles={max_articles}")
+        logger.info(f"Getting market summary for query: '{user_query}'")
         
         # Fetch web results for the user query (web search only)
         if user_query:
-            logger.info(f"Searching web results for query: {user_query!r}")
+            logger.info(f"Searching web results for query: {user_query}")
         else:
             logger.info("Searching general web results as no specific query provided.")
         # Google 검색 API 직접 호출로 대체
@@ -75,7 +74,6 @@ class InfoCrawler:
         google_results = []
         try:
             url = "https://www.googleapis.com/customsearch/v1"
-            from datetime import datetime, timedelta
             params = {
                 "key": settings.GOOGLE_API_KEY,
                 "cx": settings.GOOGLE_CX,
@@ -170,7 +168,7 @@ class InfoCrawler:
         from src.utils.azure_openai import azure_chat_completion
         
         # 실시간 KST 시간 가져오기
-        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+        now_kst = datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
         system_prompt_1 = (
             f"You are a professional financial news summarizer. The current local time is {now_kst} (KST). "

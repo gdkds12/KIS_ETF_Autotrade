@@ -15,6 +15,7 @@ import inspect
 from typing import Callable, Dict, Any
 import pandas as pd
 import logging
+from src.config import ORCHESTRATOR
 
 COMMANDS: Dict[str, Callable[..., Any]] = {}
 
@@ -81,21 +82,30 @@ def get_market_summary(query: str) -> str:
     return ORCHESTRATOR.info_crawler.get_market_summary(user_query=query) # Pass query here
 
 @command
-def search_symbols(query: str) -> list:
-    """KIS API로 종목/회사 검색 (query)."""
-    if ORCHESTRATOR is None:
-        return []
-    # KIS API를 활용한 종목 검색 우선시
-    broker = ORCHESTRATOR.broker
-    # 해외 여부 자동 감지
-    is_foreign = broker.is_overseas_symbol(query)
-    results = broker.search_symbol(query=query, is_foreign=is_foreign)
-    if results:
-        return results
-    # fallback: InfoCrawler의 get_market_summary 사용
-    if hasattr(ORCHESTRATOR, 'info_crawler'):
-        return ORCHESTRATOR.info_crawler.get_market_summary(user_query=query)
-    return []
+def search_symbols(query: str) -> str:
+    """종목명 또는 심볼로 주식/ETF를 검색합니다. Searches for stocks/ETFs by name or symbol."""
+    logger.info(f"[search_symbols] Searching for symbol/company: {query}")
+    try:
+        # Use Finnhub for symbol lookup as it handles names better
+        search_result = ORCHESTRATOR.finnhub_client.symbol_lookup(query)
+        if search_result and search_result.get('result'):
+            # Return the first result found
+            first_result = search_result['result'][0]
+            symbol = first_result.get('symbol')
+            description = first_result.get('description')
+            logger.info(f"[search_symbols] Found symbol: {symbol} ({description}) for query: {query}")
+            # Format the output string
+            return f"검색 결과: 심볼 '{symbol}' ({description})을(를) 찾았습니다. 이 심볼로 시세를 조회할 수 있습니다."
+        else:
+            logger.warning(f"[search_symbols] No symbol found for query: {query} via Finnhub")
+            # Optionally, could try KIS search here as a fallback if needed
+            # kis_result = ORCHESTRATOR.kis_broker.search_symbol(query)
+            # if kis_result: ...
+            return f"'{query}'에 대한 종목 정보를 찾을 수 없습니다."
+
+    except Exception as e:
+        logger.error(f"[search_symbols] Error searching for symbol '{query}': {e}", exc_info=True)
+        return f"'{query}' 종목 검색 중 오류가 발생했습니다: {e}"
 
 @command
 def get_quote(symbol: str) -> str:
@@ -152,4 +162,3 @@ def get_overseas_trading_status() -> dict:
     if ORCHESTRATOR is None:
         return {"error": "orchestrator not ready"}
     return ORCHESTRATOR.broker.get_overseas_status()
-
