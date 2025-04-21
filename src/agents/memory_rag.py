@@ -4,12 +4,14 @@ import uuid
 import datetime
 from typing import Optional, List, Dict, Any
 
+import openai # Add OpenAI library
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import Distance, VectorParams, PointStruct, UpdateStatus
-from sentence_transformers import SentenceTransformer # 실제 임베딩 모델 라이브러리
-from tenacity import retry, stop_after_attempt, wait_fixed, RetryError # Qdrant 연결 재시도
+# Remove SentenceTransformer import if no longer needed elsewhere, keep for now
+# from sentence_transformers import SentenceTransformer
+from tenacity import retry, stop_after_attempt, wait_fixed, RetryError
 from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy import select # select 함수 임포트
+from sqlalchemy import select
 
 # 내부 config 모듈에서 설정 로드
 from src.config import settings
@@ -34,29 +36,33 @@ class MemoryRAG:
         """
         self.db_session_factory = db_session_factory
         self.qdrant_client = qdrant_client
-        self.llm_model = llm_model
+        self.llm_model = llm_model # Used for summarization via Azure
         self.collection_name = "autotrade_memory"
         self.vector_dim = settings.VECTOR_DIM
-        self.embedding_model_name = settings.EMBEDDING_MODEL_NAME
+        self.embedding_model_name = settings.EMBEDDING_MODEL_NAME # Should be 'text-embedding-3-large'
 
         if not self.db_session_factory:
             raise ValueError("db_session_factory is required.")
         if not self.qdrant_client:
             raise ValueError("qdrant_client is required.")
         if not self.llm_model:
-            raise ValueError("llm_model (Azure deployment name) is required.")
+            raise ValueError("llm_model (Azure deployment name for summarization) is required.")
+        if not settings.OPENAI_API_KEY:
+             raise ValueError("OPENAI_API_KEY is required in settings for embeddings.")
 
         try:
-            # 임베딩 모델 로드 (초기화 시 한 번만)
-            self.embedding_model = SentenceTransformer(self.embedding_model_name)
-            logger.info(f"Embedding model '{self.embedding_model_name}' loaded successfully.")
+            # Initialize OpenAI client for embeddings
+            self.openai_client = openai.OpenAI(api_key=settings.OPENAI_API_KEY)
+            # Verify connection by making a simple call (optional, but good practice)
+            # self.openai_client.models.list() # Example verification
+            logger.info(f"OpenAI client initialized successfully for embeddings using model '{self.embedding_model_name}'.")
         except Exception as e:
-            logger.error(f"Failed to load embedding model '{self.embedding_model_name}': {e}", exc_info=True)
-            raise RuntimeError(f"Could not load embedding model: {e}")
+            logger.error(f"Failed to initialize OpenAI client: {e}", exc_info=True)
+            raise RuntimeError(f"Could not initialize OpenAI client: {e}")
 
-        # 컬렉션 존재 확인 및 생성
+        # 컬렉션 존재 확인 및 생성 (Qdrant part remains the same)
         self._ensure_collection_exists()
-        logger.info(f"MemoryRAG initialized. Using Qdrant collection: {self.collection_name}, LLM: {self.llm_model}")
+        logger.info(f"MemoryRAG initialized. Using Qdrant collection: {self.collection_name}, Summarization LLM: {self.llm_model}, Embedding Model: {self.embedding_model_name}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     def _ensure_collection_exists(self):
@@ -83,20 +89,37 @@ class MemoryRAG:
             # 특정 Qdrant 예외를 잡는 것이 더 좋을 수 있음
             raise RuntimeError(f"Qdrant operation failed: {e}")
 
+    @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
     def get_embedding(self, text: str) -> List[float]:
-        """주어진 텍스트에 대한 임베딩 벡터를 생성합니다."""
+        """주어진 텍스트에 대한 임베딩 벡터를 생성합니다 (OpenAI API 사용)."""
+        if not text or not isinstance(text, str):
+            logger.warning("get_embedding called with empty or invalid text.")
+            return [] # Return empty list for invalid input
+
         try:
-            # 모델이 로드되었는지 확인 (선택적, __init__에서 처리)
-            if not hasattr(self, 'embedding_model') or self.embedding_model is None:
-                 raise RuntimeError("Embedding model is not loaded.")
-            
-            # 임베딩 생성 및 리스트로 변환
-            embedding = self.embedding_model.encode(text, convert_to_numpy=True).tolist()
+            # Replace SentenceTransformer encode with OpenAI API call
+            response = self.openai_client.embeddings.create(
+                input=text,
+                model=self.embedding_model_name
+            )
+            # Extract the embedding vector
+            embedding = response.data[0].embedding
+            # logger.debug(f"Generated embedding for text snippet: '{text[:50]}...' Dimension: {len(embedding)}")
             return embedding
+        except openai.APIConnectionError as e:
+            logger.error(f"OpenAI API request failed to connect: {e}")
+            raise RuntimeError(f"OpenAI API Connection Error: {e}")
+        except openai.RateLimitError as e:
+            logger.error(f"OpenAI API request exceeded rate limit: {e}")
+            # Implement specific backoff/retry logic if needed, or rely on tenacity
+            raise RuntimeError(f"OpenAI API Rate Limit Error: {e}")
+        except openai.APIStatusError as e:
+            logger.error(f"OpenAI API returned an error status: {e.status_code} - {e.response}")
+            raise RuntimeError(f"OpenAI API Status Error: {e}")
         except Exception as e:
-            logger.error(f"Failed to generate embedding for text: {e}", exc_info=True)
-            # 임베딩 실패 시 빈 리스트 또는 None 반환 고려
-            raise RuntimeError(f"Embedding generation failed: {e}")
+            logger.error(f"Failed to get embedding from OpenAI for text '{text[:100]}...': {e}", exc_info=True)
+            # Reraise after logging, potentially wrapping in a custom exception
+            raise RuntimeError(f"Failed to get embedding: {e}")
 
     def save_memory(self, text: str, metadata: dict = None, memory_id: Optional[str] = None) -> str:
         """텍스트와 메타데이터를 벡터화하여 Qdrant에 저장(upsert)합니다."""
