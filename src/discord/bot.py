@@ -177,13 +177,18 @@ class TradeCog(commands.Cog):
 
         logger.debug(f"[on_message] 1st call to azure_chat_completion (detect function_call)")
         loop = asyncio.get_running_loop()
+        from src.utils import registry
+        # 모든 등록 함수의 function spec 추출
+        functions = [fn._oas for fn in registry.COMMANDS.values() if hasattr(fn, '_oas')]
         resp = await loop.run_in_executor(
             None,
             azure_chat_completion,
             settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
             history,
             1000,
-            0.7
+            0.7,
+            functions,
+            "auto"
         )
 
         assistant_msg = resp["choices"][0]["message"]
