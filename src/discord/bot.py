@@ -185,13 +185,11 @@ class TradeCog(commands.Cog):
                     self.bot.active_sessions[channel_id] = session
                     logger.debug(f"[on_message] Calling LLM again to summarize function result.")
                     # 함수 실행 결과를 요약하도록 LLM 재호출
-                    import datetime
-import pytz
-now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
-history.append({"role": "system", "content":
+                    now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+                    history.append({"role": "system", "content":
                         f"You are a trading assistant for Korean ETF and global stock investors. "
                         f"The current local time is {now_kst}. The local time zone is Asia/Seoul (KST, UTC+9). Always use this time and time zone for all date/time reasoning, news relevance, and when presenting or interpreting dates and times for the user, unless otherwise specified. "
-                        "When calling any function related to news search, market summary, or overseas API, always generate query arguments in English. "
+                        "When calling any function related to market summary or overseas API, always generate query arguments in English. "
                         "If a user asks for news, always use the latest information available. "
                         "If you need to translate a query for an overseas API, do so automatically. "
                         "If a function call is required, always provide the most relevant arguments. "
