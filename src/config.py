@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     AZURE_OPENAI_ENDPOINT: str
     AZURE_OPENAI_API_VERSION: str
     AZURE_OPENAI_DEPLOYMENT_GPT4: str
-    AZURE_OPENAI_DEPLOYMENT_GPT35: str
+    AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO: str
 
     # Tier별 모델 이름 정의 (사용 목적에 맞게 조정)
     # Using gpt-4o-mini as a placeholder for the non-existent gpt-4.1-nano

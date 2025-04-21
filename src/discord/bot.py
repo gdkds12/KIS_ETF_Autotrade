@@ -130,7 +130,7 @@ class TradeCog(commands.Cog):
         session = self.bot.active_sessions[channel_id]
         # Initialize or retrieve conversation history with system prompt for function usage
         history = session.get("history", [{"role": "system", "content":
-            "당신은 한국 주식 시장을 위한 전문 금융 뉴스 및 트레이딩 어시스턴트입니다.\n"
+            "당신은 주식 시장을 위한 전문 금융 뉴스 및 트레이딩 어시스턴트입니다.\n"
             "- get_balance(): 내 계좌의 잔고와 총 자산을 조회합니다.\n"
             "- get_positions(): 현재 보유 중인 종목 목록을 조회합니다.\n"
             "- get_market_summary(query: str): 입력한 영어 질의(query)에 맞는 시장 요약 정보를 제공합니다.\n"
@@ -139,7 +139,7 @@ class TradeCog(commands.Cog):
             "- get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str): 과거 가격 데이터를 조회합니다.\n"
             "- order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell_code: str): 현금 주문을 실행합니다.\n"
             "- get_overseas_trading_status(): 해외 주식 거래 가능 여부를 확인합니다.\n"
-            "모든 시장 요약(get_market_summary)은 영어 쿼리로만 동작하며, 번역이나 멀티서치는 필요하지 않습니다.\n"
+            "모든 시장 요약(get_market_summary)은 영어 쿼리로만 동작합니다다.\n"
             "시장 요약을 요청받으면, 최신 기사와 신뢰성 있는 정보를 바탕으로 중복 없이 핵심만 요약하고, 서로 다른 의견이 있으면 명확히 언급하며, 날짜/시간이 있다면 최신 정보에 더 가중치를 두고, 명확한 시장 방향성이 보이면 결론도 포함하여 반드시 한국어로 요약하세요.\n"
             "함수 호출이 필요할 경우 반드시 다음과 같은 JSON 형식으로 답변하세요:\n"
             '{"function": "<함수명>", "arguments": {...}}\n'
@@ -147,13 +147,13 @@ class TradeCog(commands.Cog):
         }])
         history.append({"role": "user", "content": message.content})
 
-        logger.debug(f"[on_message] Calling azure_chat_completion with deployment={settings.AZURE_OPENAI_DEPLOYMENT_GPT35!r} and history length={len(history)}")
+        logger.debug(f"[on_message] Calling azure_chat_completion with deployment={settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO!r} and history length={len(history)}")
         # Call REST-based AI agent asynchronously
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
             azure_chat_completion,
-            settings.AZURE_OPENAI_DEPLOYMENT_GPT35,
+            settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO,
             history,
             1000,
             0.7
@@ -201,7 +201,7 @@ class TradeCog(commands.Cog):
                     resp2 = await loop.run_in_executor(
                         None,
                         azure_chat_completion,
-                        settings.AZURE_OPENAI_DEPLOYMENT_GPT35,
+                        settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO,
                         history,
                         1000,
                         0.7
