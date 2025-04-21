@@ -1,204 +1,213 @@
 # Qdrant 벡터 저장·검색
 import logging
-from qdrant_client import QdrantClient, models
-from qdrant_client.http.models import Distance, VectorParams
-# from sqlalchemy.orm import Session # For DB interaction if needed
-# from some_embedding_model import get_embedding # Placeholder
 import uuid
-from sentence_transformers import SentenceTransformer # 실제 임베딩 모델 라이브러리
-from tenacity import retry, stop_after_attempt, wait_fixed # Qdrant 연결 재시도
-from sqlalchemy.orm import Session
-from sqlalchemy import select # select 함수 임포트
 import datetime
-# import google.generativeai as genai # Gemini 라이브러리 임포트
+from typing import Optional, List, Dict, Any
+
+from qdrant_client import QdrantClient, models
+from qdrant_client.http.models import Distance, VectorParams, PointStruct, UpdateStatus
+from sentence_transformers import SentenceTransformer # 실제 임베딩 모델 라이브러리
+from tenacity import retry, stop_after_attempt, wait_fixed, RetryError # Qdrant 연결 재시도
+from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import select # select 함수 임포트
 
 # 내부 config 모듈에서 설정 로드
 from src.config import settings
 from src.db.models import TradingSession, SessionLog # DB 모델 임포트
-# Placeholder for LLM summarization function
-# from some_llm_library import summarize_text
 from src.utils.azure_openai import azure_chat_completion
 
 logger = logging.getLogger(__name__)
 
-# ✅ GPT-4o 또는 o4-mini 계열은 max_completion_tokens, 그 외는 max_tokens 사용 (SDK 최신 버전 기준)
-def get_token_param(model: str, limit: int) -> dict:
-    if model.startswith("o4") or model.startswith("gpt-4o"):
-        return {"max_completion_tokens": limit}
-    else:
-        return {"max_tokens": limit}
-
-def get_temperature_param(model: str, temperature: float) -> dict:
-    if model.startswith("o4") or model.startswith("gpt-4o"):
-        return {}  # 기본값 1.0만 지원
-    else:
-        return {"temperature": temperature}
-
-# --- OpenAI 모델 초기화 (MemoryRAG 용) ---
-# Rely on global setting of openai.api_key done elsewhere (e.g., orchestrator, bot setup)
-if settings.AZURE_OPENAI_API_KEY:
-    # openai.api_key = settings.OPENAI_API_KEY # Avoid setting globally multiple times
-    logger.info(f"MemoryRAG will use Azure OpenAI model for summarization: {settings.LLM_LIGHTWEIGHT_TIER_MODEL}")
-else:
-    logger.warning("AZURE_OPENAI_API_KEY not set. Session summarization will use placeholder.")
-
-# --- LLM 요약 함수 (Now using OpenAI) --- 
-def summarize_text(text: str, topic: str = None) -> str:
-    """LLM을 사용하여 텍스트 요약하기"""
-    system_prompt = (
-        "당신은 텍스트 요약 전문가입니다. 다음 텍스트를 명확하고 간결하게 요약해주세요.\n"
-        "요약은 원문의 핵심 정보와 중요한 세부 사항을 보존해야 합니다.\n"
-        "불필요한 세부사항은 제외하고, 원문의 주요 주제와 논점에 집중하세요.\n"
-        "한국어로 3-5문장 분량으로 요약하세요."
-    )
-    
-    user_content = f"다음 텍스트를 요약해주세요:\n\n{text}"
-    if topic:
-        user_content += f"\n\n이 텍스트는 '{topic}' 주제와 관련이 있습니다."
-        
-    try:
-        resp_json = azure_chat_completion(
-            deployment=settings.LLM_SUMMARY_TIER_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_content}
-            ],
-            max_tokens=300,
-            temperature=0.3
-        )
-        summary = resp_json["choices"][0]["message"]["content"].strip()
-        logger.info("Successfully received summary from Azure OpenAI.")
-        return summary
-    except Exception as e:
-        logger.error(f"Azure OpenAI summarization failed: {e}", exc_info=True)
-        return f"(요약 불가: {e})"
 
 class MemoryRAG:
-    def __init__(self, db_session_factory = None):
+    """세션 로그 요약, 벡터 저장 및 검색을 위한 RAG 클래스"""
+
+    DEFAULT_SCORE_THRESHOLD = 0.65 # 유사도 검색 기본 임계값
+
+    def __init__(self, db_session_factory: sessionmaker, qdrant_client: QdrantClient, llm_model: str):
         """MemoryRAG 초기화
 
         Args:
-            db_session_factory: SQLAlchemy 세션 팩토리 (e.g., SessionLocal). 제공되지 않으면 DB 연동 기능 제한.
+            db_session_factory: SQLAlchemy 세션 팩토리 (e.g., SessionLocal).
+            qdrant_client: 미리 초기화된 Qdrant 클라이언트 인스턴스.
+            llm_model: 요약에 사용할 Azure OpenAI 배포 이름.
         """
-        self.qdrant_uri = settings.QDRANT_URL
-        self.qdrant_api_key = settings.QDRANT_API_KEY
+        self.db_session_factory = db_session_factory
+        self.qdrant_client = qdrant_client
+        self.llm_model = llm_model
         self.collection_name = "autotrade_memory"
         self.vector_dim = settings.VECTOR_DIM
         self.embedding_model_name = settings.EMBEDDING_MODEL_NAME
-        self.db_session_factory = db_session_factory # 세션 팩토리 저장
 
-        # (REMOVED) OpenAI Embedding API 초기화
-        if not settings.AZURE_OPENAI_API_KEY:
-            raise RuntimeError("AZURE_OPENAI_API_KEY must be set to use Azure OpenAI embeddings")
+        if not self.db_session_factory:
+            raise ValueError("db_session_factory is required.")
+        if not self.qdrant_client:
+            raise ValueError("qdrant_client is required.")
+        if not self.llm_model:
+            raise ValueError("llm_model (Azure deployment name) is required.")
 
+        try:
+            # 임베딩 모델 로드 (초기화 시 한 번만)
+            self.embedding_model = SentenceTransformer(self.embedding_model_name)
+            logger.info(f"Embedding model '{self.embedding_model_name}' loaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to load embedding model '{self.embedding_model_name}': {e}", exc_info=True)
+            raise RuntimeError(f"Could not load embedding model: {e}")
 
-
-
-        # Qdrant 클라이언트 초기화
-        self.qdrant_client = self._init_qdrant_client()
+        # 컬렉션 존재 확인 및 생성
         self._ensure_collection_exists()
-        logger.info(f"MemoryRAG initialized ({'with DB' if db_session_factory else 'without DB'} factory).")
+        logger.info(f"MemoryRAG initialized. Using Qdrant collection: {self.collection_name}, LLM: {self.llm_model}")
 
     @retry(stop=stop_after_attempt(3), wait=wait_fixed(2), reraise=True)
-    def _init_qdrant_client(self) -> QdrantClient:
-        """Qdrant 클라이언트를 초기화하고 연결을 시도합니다."""
-        try:
-            logger.info(f"Connecting to Qdrant at {self.qdrant_uri}...")
-            client = QdrantClient(url=self.qdrant_uri, api_key=self.qdrant_api_key, timeout=10)
-            # 연결 테스트: collections 가져오기
-            _ = client.get_collections()
-            logger.info("Successfully connected to Qdrant.")
-            return client
-        except Exception as e:
-            logger.error(f"Failed to connect to Qdrant: {e}")
-            raise
-
     def _ensure_collection_exists(self):
         """Qdrant에 필요한 컬렉션이 없으면 생성합니다."""
         try:
-            collection_info = self.qdrant_client.get_collection(collection_name=self.collection_name)
-            existing_dim = collection_info.vectors_config.params.size
-            if existing_dim != self.vector_dim:
-                logger.warning(f"Qdrant collection '{self.collection_name}' exists but has different vector dimension ({existing_dim}) than model ({self.vector_dim}). Consider recreating collection.")
-            logger.info(f"Qdrant collection '{self.collection_name}' exists with dimension {existing_dim}.")
-        except Exception as e:
-            logger.warning(f"Collection '{self.collection_name}' not found or error checking: {e}. Attempting to create...")
-            try:
+            collections = self.qdrant_client.get_collections().collections
+            collection_names = [col.name for col in collections]
+
+            if self.collection_name not in collection_names:
+                logger.info(f"Collection '{self.collection_name}' not found. Creating it...")
                 self.qdrant_client.create_collection(
                     collection_name=self.collection_name,
-                    vectors_config=models.VectorParams(size=self.vector_dim, distance=models.Distance.COSINE)
+                    vectors_config=VectorParams(size=self.vector_dim, distance=Distance.COSINE)
                 )
-                logger.info(f"Collection '{self.collection_name}' created with dimension {self.vector_dim}.")
-            except Exception as create_e:
-                # 이미 존재해서 409 Conflict 가 떴다면 그냥 무시
-                msg = str(create_e)
-                if 'already exists' in msg or 'Conflict' in msg:
-                    logger.warning(f"Collection '{self.collection_name}' already exists, skipping creation.")
-                else:
-                    logger.error(f"Failed to create Qdrant collection: {create_e}", exc_info=True)
-                    raise RuntimeError(f"Failed to create Qdrant collection: {create_e}") from create_e
+                logger.info(f"Collection '{self.collection_name}' created successfully.")
+            else:
+                logger.debug(f"Collection '{self.collection_name}' already exists.")
 
-    def get_embedding(self, text: str) -> list[float]:
+        except RetryError as e:
+             logger.error(f"Failed to ensure Qdrant collection '{self.collection_name}' exists after multiple retries: {e}")
+             raise RuntimeError(f"Could not connect to or verify Qdrant collection: {e}")
+        except Exception as e:
+            logger.error(f"Error ensuring Qdrant collection '{self.collection_name}': {e}", exc_info=True)
+            # 특정 Qdrant 예외를 잡는 것이 더 좋을 수 있음
+            raise RuntimeError(f"Qdrant operation failed: {e}")
+
+    def get_embedding(self, text: str) -> List[float]:
         """주어진 텍스트에 대한 임베딩 벡터를 생성합니다."""
         try:
-            resp = self.embedding_model.Embedding.create(
-                model=self.embedding_model_name,
-                input=text
-            )
-            return resp["data"][0]["embedding"]
+            # 모델이 로드되었는지 확인 (선택적, __init__에서 처리)
+            if not hasattr(self, 'embedding_model') or self.embedding_model is None:
+                 raise RuntimeError("Embedding model is not loaded.")
+            
+            # 임베딩 생성 및 리스트로 변환
+            embedding = self.embedding_model.encode(text, convert_to_numpy=True).tolist()
+            return embedding
         except Exception as e:
-            logger.error(f"Failed to generate embedding for text: '{text[:50]}...': {e}", exc_info=True)
-            raise ValueError(f"Embedding failed: {e}") from e
+            logger.error(f"Failed to generate embedding for text: {e}", exc_info=True)
+            # 임베딩 실패 시 빈 리스트 또는 None 반환 고려
+            raise RuntimeError(f"Embedding generation failed: {e}")
 
-    def save_memory(self, text: str, metadata: dict = None):
-        """텍스트와 메타데이터를 벡터화하여 Qdrant에 저장합니다."""
+    def save_memory(self, text: str, metadata: dict = None, memory_id: Optional[str] = None) -> str:
+        """텍스트와 메타데이터를 벡터화하여 Qdrant에 저장(upsert)합니다."""
         if not text:
-            logger.warning("Attempted to save empty text to memory. Skipping.")
-            return
+            logger.warning("Attempted to save memory with empty text. Skipping.")
+            return None
+        
+        if not memory_id:
+            memory_id = str(uuid.uuid4())
+
+        metadata = metadata or {}
+        metadata['created_at'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        metadata['original_text'] = text # 원문 저장 (선택적)
+
         try:
             vector = self.get_embedding(text)
-            doc_id = str(uuid.uuid4())
-            payload = metadata if metadata else {}
-            payload["text"] = text # 원본 텍스트 저장
-            self.qdrant_client.upsert(
-                collection_name=self.collection_name,
-                points=[
-                    models.PointStruct(
-                        id=doc_id,
-                        vector=vector,
-                        payload=payload
-                    )
-                ],
-                wait=True
+            
+            point = PointStruct(
+                id=memory_id,
+                vector=vector,
+                payload=metadata
             )
-            logger.info(f"Saved memory item with ID: {doc_id}, Metadata: {metadata}")
-        except ValueError as e: # 임베딩 실패 시
-             logger.error(f"Skipping memory save due to embedding error: {e}")
-        except Exception as e:
-            # doc_id가 정의되지 않았을 수 있으므로 try 블록 밖에서 사용하지 않음
-            logger.error(f"Failed to save memory: {e}", exc_info=True)
+            
+            response = self.qdrant_client.upsert(
+                collection_name=self.collection_name,
+                points=[point],
+                wait=True # 작업 완료 대기
+            )
+            
+            if response.status == UpdateStatus.COMPLETED:
+                 logger.info(f"Memory saved/updated successfully with ID: {memory_id}")
+                 return memory_id
+            else:
+                 logger.warning(f"Memory upsert for ID {memory_id} finished with status: {response.status}")
+                 # 부분 성공/실패 시 처리 필요 시 추가
+                 return memory_id # ID는 반환하나, 상태 확인 필요
 
-    def search_similar(self, query_text: str, limit: int = 5, score_threshold: float = 0.5) -> list:
+        except RuntimeError as e:
+             logger.error(f"Failed to save memory due to embedding error: {e}")
+             raise # 임베딩 실패는 심각한 문제일 수 있으므로 다시 raise
+        except Exception as e:
+            logger.error(f"Failed to save memory to Qdrant (ID: {memory_id}): {e}", exc_info=True)
+            raise RuntimeError(f"Qdrant upsert operation failed: {e}")
+
+    def search_similar(self, query_text: str, limit: int = 5, score_threshold: Optional[float] = None) -> List[models.ScoredPoint]:
         """주어진 텍스트와 유사한 메모리를 Qdrant에서 검색합니다."""
-        if not query_text:
-            logger.warning("Attempted to search with empty query text. Returning empty list.")
-            return []
+        if score_threshold is None:
+             score_threshold = self.DEFAULT_SCORE_THRESHOLD
+             
         try:
             query_vector = self.get_embedding(query_text)
+            
             search_result = self.qdrant_client.search(
                 collection_name=self.collection_name,
                 query_vector=query_vector,
                 limit=limit,
-                score_threshold=score_threshold
+                score_threshold=score_threshold # 임계값 적용
             )
-            logger.info(f"Found {len(search_result)} similar items for query '{query_text[:50]}...' with threshold {score_threshold}.")
+            logger.info(f"Found {len(search_result)} similar memories for query (threshold: {score_threshold}).")
             return search_result
-        except ValueError as e: # 임베딩 실패 시
-             logger.error(f"Skipping memory search due to query embedding error: {e}")
-             return []
+            
+        except RuntimeError as e:
+             logger.error(f"Failed to search memory due to embedding error: {e}")
+             return [] # 임베딩 실패 시 빈 결과 반환
         except Exception as e:
-            logger.error(f"Failed to search memory for query '{query_text[:50]}...': {e}", exc_info=True)
-            return []
+            logger.error(f"Failed to search similar memories in Qdrant: {e}", exc_info=True)
+            return [] # Qdrant 검색 실패 시 빈 결과 반환
+
+    def _summarize(self, text: str, topic: Optional[str] = None) -> str:
+        """LLM을 사용하여 텍스트 요약 (내부 헬퍼 함수)"""
+        system_prompt = (
+            "당신은 금융 거래 및 투자 관련 대화 내용을 전문적으로 요약하는 AI 어시스턴트입니다. "
+            "주어진 대화 로그의 핵심 내용을 간결하고 명확하게 요약해주세요. "
+            "주요 결정사항, 투자 종목, 매수/매도 지시, 질문, 답변 등을 포함해야 합니다. "
+            "객관적인 사실 위주로 요약하고, 한국어로 3~5 문장으로 작성해주세요."
+        )
+        
+        user_content = f"다음 대화 로그를 요약해주세요:\n\n---\n{text}\n---"
+        if topic:
+            user_content += f"\n\n(참고: 이 대화는 '{topic}' 주제와 관련이 있습니다.)"
+            
+        try:
+            # Azure OpenAI REST API 호출
+            resp_json = azure_chat_completion(
+                deployment=self.llm_model, # __init__에서 설정된 모델 사용
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_content}
+                ],
+                max_tokens=500, # 요약 결과에 충분한 토큰 할당
+                temperature=0.3 # 일관성 있는 요약을 위해 낮은 온도 설정
+            )
+            
+            # 결과 확인 및 추출 (오류 처리 강화)
+            if not resp_json or "choices" not in resp_json or not resp_json["choices"]:
+                 logger.error("Invalid response received from Azure OpenAI API during summarization.")
+                 raise ValueError("Azure OpenAI API returned an unexpected response format.")
+                 
+            summary = resp_json["choices"][0].get("message", {}).get("content", "").strip()
+            
+            if not summary:
+                 logger.warning("Azure OpenAI returned an empty summary.")
+                 return "(요약 내용 없음)" 
+                 
+            logger.info(f"Successfully received summary from Azure OpenAI model: {self.llm_model}")
+            return summary
+            
+        except Exception as e:
+            logger.error(f"Azure OpenAI summarization failed using model {self.llm_model}: {e}", exc_info=True)
+            # 간단한 오류 메시지 반환
+            return f"(자동 요약 생성 중 오류 발생: {type(e).__name__})"
 
     def summarize_and_upsert(self, session_uuid: str):
         """특정 세션의 로그를 DB에서 조회하여 요약하고 결과를 Qdrant와 DB에 저장합니다.
@@ -207,231 +216,282 @@ class MemoryRAG:
             session_uuid: 요약할 세션의 내부 UUID
         """
         if not self.db_session_factory:
-             logger.warning("DB session factory not provided. Cannot summarize session from DB.")
-             return
-             
-        logger.info(f"Attempting to summarize session {session_uuid} from DB...")
-        db: Session = self.db_session_factory()
+            logger.error("Database session factory not configured. Cannot summarize session.")
+            return
+
+        session: Session = self.db_session_factory()
         try:
-            # 1. DB에서 세션 및 로그 조회
-            stmt = select(TradingSession).where(TradingSession.session_uuid == session_uuid)
-            session_obj = db.scalars(stmt).first()
-            
-            if not session_obj:
-                logger.warning(f"TradingSession with UUID {session_uuid} not found in DB.")
+            # 1. DB에서 세션 및 관련 로그 조회
+            trading_session = session.query(TradingSession).filter(TradingSession.session_uuid == session_uuid).first()
+            if not trading_session:
+                logger.warning(f"Trading session with UUID {session_uuid} not found in DB.")
+                return
+                
+            if not trading_session.is_active:
+                logger.info(f"Session {session_uuid} is already inactive. Skipping summarization.")
+                # 이미 요약본이 있는지 확인하고 없으면 생성할 수도 있음 (선택적)
                 return
 
-            if not session_obj.is_active: # 이미 종료된 세션은 요약하지 않음 (옵션)
-                 logger.info(f"Session {session_uuid} is already inactive. Skipping summarization.")
-                 # return
-                 
-            # 로그 조회 (최신 순으로 가져오는 것이 좋을 수 있음)
-            log_stmt = select(SessionLog).where(SessionLog.session_id == session_obj.id).order_by(SessionLog.timestamp.asc())
-            logs = db.scalars(log_stmt).all()
-            
+            logs = session.query(SessionLog).filter(SessionLog.session_id == trading_session.id).order_by(SessionLog.timestamp.asc()).all()
             if not logs:
-                logger.warning(f"No logs found for session {session_uuid} (DB ID: {session_obj.id}). Cannot summarize.")
+                logger.info(f"No logs found for session {session_uuid}. Cannot summarize.")
+                # 세션 비활성화 처리만 수행
+                trading_session.is_active = False
+                trading_session.end_time = datetime.datetime.now(datetime.timezone.utc)
+                session.commit()
+                logger.info(f"Marked session {session_uuid} as inactive due to no logs.")
                 return
 
-            # 2. 로그 텍스트 조합
-            conversation_text = "\n".join([f"{log.actor}: {log.message}" for log in logs])
-            logger.info(f"Retrieved {len(logs)} logs for session {session_uuid} for summarization.")
+            # 2. 로그 텍스트 포맷팅 (요약 입력용)
+            log_texts = [f"{log.actor} ({log.timestamp.strftime('%H:%M:%S')}): {log.message}" for log in logs]
+            full_log_text = "\n".join(log_texts)
+            
+            logger.info(f"Summarizing {len(logs)} logs for session {session_uuid}...")
+            
+            # 3. LLM을 사용한 요약 생성
+            # topic 정보를 추가하면 요약 품질 향상에 도움될 수 있음 (예: 첫 사용자 메시지 등)
+            topic_hint = logs[0].message if logs else "투자 관련 대화"
+            summary = self._summarize(full_log_text, topic=topic_hint)
+            logger.info(f"Generated summary for session {session_uuid}: {summary[:100]}...")
 
-            # 3. LLM 요약 호출 (Now uses Azure OpenAI REST API)
-            summary_text = summarize_text(conversation_text)
-
-            # 4. Qdrant에 요약 저장
-            self.save_memory(summary_text, metadata={
-                "type": "session_summary", 
+            # 4. 요약 결과를 Qdrant에 저장
+            summary_metadata = {
+                "type": "session_summary",
                 "session_uuid": session_uuid,
-                "discord_thread_id": session_obj.discord_thread_id,
-                "discord_user_id": session_obj.discord_user_id
-            })
+                "discord_thread_id": trading_session.discord_thread_id,
+                "discord_user_id": trading_session.discord_user_id,
+                "log_count": len(logs),
+                "original_log_preview": full_log_text[:200] + "..." # 미리보기 저장
+            }
+            # 요약문 자체를 벡터화하여 저장
+            summary_memory_id = self.save_memory(summary, metadata=summary_metadata, memory_id=f"summary_{session_uuid}") 
+            if summary_memory_id:
+                 logger.info(f"Saved session summary to Qdrant with ID: {summary_memory_id}")
+            else:
+                 logger.warning(f"Failed to save session summary {session_uuid} to Qdrant.")
 
-            # 5. DB에 세션 상태 및 요약 업데이트
-            session_obj.summary = summary_text
-            session_obj.is_active = False # 세션 비활성화
-            session_obj.end_time = datetime.datetime.now(datetime.timezone.utc) # 종료 시간 기록
-            db.commit()
-            logger.info(f"Session {session_uuid} summarized, saved to Qdrant, and marked inactive in DB.")
+            # 5. DB에 요약 결과 및 세션 종료 상태 업데이트
+            trading_session.summary = summary
+            trading_session.is_active = False
+            trading_session.end_time = datetime.datetime.now(datetime.timezone.utc)
+            session.commit()
+            logger.info(f"Updated session {session_uuid} in DB with summary and marked as inactive.")
 
         except Exception as e:
-            logger.error(f"Error during summarize_and_upsert for session {session_uuid}: {e}", exc_info=True)
-            db.rollback() # 오류 발생 시 롤백
+            logger.error(f"Error during summarization and upsert for session {session_uuid}: {e}", exc_info=True)
+            session.rollback() # 오류 발생 시 롤백
         finally:
-            db.close()
+            session.close()
 
-    def save_trade_results(self, trade_results: list):
-        """(Deprecated) 거래 결과를 메모리(Qdrant)에 저장합니다. 대신 save_execution_results 사용 권장."""
-        logger.warning("save_trade_results is deprecated. Use save_execution_results instead.")
-        # Keep for backward compatibility or simple cases if needed
-        saved_count = 0
-        for result in trade_results:
-            try:
-                status = "성공" if result.get("rt_cd") == "0" else "실패"
-                order_info = result.get('order', {})
-                symbol = order_info.get('symbol', 'N/A')
-                action = order_info.get('action', 'N/A').upper()
-                quantity = order_info.get('quantity', 'N/A')
-                # Simple text representation
-                text = f"거래 결과 [{status}]: {action} {symbol} {quantity}주. 메시지: {result.get('msg1', 'N/A')}"
-                metadata = {
-                    "type": "trade_result",
-                    "status": status.lower(),
-                    "symbol": symbol,
-                    "action": action.lower(),
-                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
-                }
-                self.save_memory(text, metadata=metadata)
-                saved_count += 1
-            except Exception as e:
-                logger.error(f"Failed to save single trade result to memory: {result}. Error: {e}", exc_info=True)
-        logger.info(f"(Deprecated) Saved {saved_count}/{len(trade_results)} trade results to memory.")
-
-    def save_execution_results(self, execution_results: list):
+    def save_execution_results(self, execution_results: List[Dict[str, Any]]):
         """Orchestrator의 실행 결과 리스트를 메모리(Qdrant)에 저장합니다."""
-        logger.info(f"Saving {len(execution_results)} execution results to memory...")
-        saved_count = 0
-        failed_count = 0
-        cycle_timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if not execution_results:
+            return
 
+        points_to_upsert = []
         for result in execution_results:
             try:
-                action_type = result.get('action_type', 'unknown')
-                status = result.get('status', 'unknown')
-                detail = result.get('detail', 'N/A')
+                # 실행 결과에서 텍스트 표현 생성 (예시, 실제 구조에 맞게 조정 필요)
+                text_representation = f"함수: {result.get('function_name', 'N/A')}, " \
+                                    f"상태: {result.get('status', 'N/A')}, " \
+                                    f"결과: {str(result.get('result', 'N/A'))[:500]}" # 결과 일부만 포함
+                
+                if not text_representation:
+                    logger.warning(f"Skipping execution result due to missing information: {result}")
+                    continue
+                    
+                # 메타데이터 구성 (실제 필요한 정보 추가)
                 metadata = {
                     "type": "execution_result",
-                    "action_type": action_type,
-                    "status": status,
-                    "timestamp": cycle_timestamp # Use same timestamp for the whole cycle
+                    "function_name": result.get('function_name'),
+                    "status": result.get('status'),
+                    "timestamp": result.get('timestamp', datetime.datetime.now(datetime.timezone.utc).isoformat()),
+                    "session_uuid": result.get('session_uuid'), # 세션 정보가 있다면 추가
+                    # 필요시 추가 필드 (예: parameters, error_message)
                 }
-                text = f"실행 결과 [{action_type.upper()}/{status.upper()}]: {detail}"
-
-                if action_type in ['buy', 'sell']:
-                    order_info = result.get('order', {})
-                    metadata['symbol'] = order_info.get('symbol')
-                    metadata['quantity'] = order_info.get('quantity')
-                    metadata['reason'] = order_info.get('reason')
-                    text += f" (Order: {order_info.get('action')} {metadata['symbol']} {metadata['quantity']}주, Reason: {metadata['reason']})"
-                elif action_type == 'briefing_summary':
-                     metadata['notes'] = result.get('notes')
-                     text = f"실행 결과 [LLM 브리핑 요약]: {len(metadata.get('notes', []))}개 노트"
-                elif action_type == 'briefing':
-                     text = f"실행 결과 [LLM 브리핑 노트]: {detail}"
-                elif action_type == 'hold':
-                     metadata['reason'] = detail
-                     text = f"실행 결과 [HOLD]: {detail}"
-
-                # Add KIS response if available (maybe just key info)
-                kis_response = result.get('kis_response')
-                if kis_response:
-                    metadata['kis_rt_cd'] = kis_response.get('rt_cd')
-                    metadata['kis_msg1'] = kis_response.get('msg1')
-                    metadata['kis_odno'] = kis_response.get('ODNO')
-
-                # Save to Qdrant
-                self.save_memory(text, metadata=metadata)
-                saved_count += 1
-
+                # None 값 제거 (Qdrant payload는 None 값 허용 안 함)
+                metadata = {k: v for k, v in metadata.items() if v is not None}
+                
+                vector = self.get_embedding(text_representation)
+                point_id = str(uuid.uuid4())
+                
+                points_to_upsert.append(PointStruct(
+                    id=point_id,
+                    vector=vector,
+                    payload=metadata
+                ))
+                logger.debug(f"Prepared execution result for saving (ID: {point_id})")
+                
+            except RuntimeError as e:
+                 logger.error(f"Failed to process execution result due to embedding error: {e} - Result: {result}")
+                 # 개별 결과 처리 실패 시 계속 진행할지 결정
             except Exception as e:
-                logger.error(f"Failed to save execution result to memory: {result}. Error: {e}", exc_info=True)
-                failed_count += 1
-        
-        logger.info(f"Finished saving execution results. Saved: {saved_count}, Failed: {failed_count}")
+                logger.error(f"Error processing execution result for saving: {e} - Result: {result}", exc_info=True)
+                # 개별 결과 처리 실패 시 계속 진행
 
-# Example Usage
+        if points_to_upsert:
+            try:
+                response = self.qdrant_client.upsert(
+                    collection_name=self.collection_name,
+                    points=points_to_upsert,
+                    wait=True
+                )
+                if response.status == UpdateStatus.COMPLETED:
+                    logger.info(f"Successfully saved {len(points_to_upsert)} execution results to Qdrant.")
+                else:
+                    logger.warning(f"Execution results upsert finished with status: {response.status}")
+            except Exception as e:
+                logger.error(f"Failed to save execution results batch to Qdrant: {e}", exc_info=True)
+                # 배치 저장 실패 시 예외 처리 (개별 저장 시도 등)
+
+# Example Usage (테스트 및 로컬 실행용)
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    from src.db.models import SessionLocal # SessionLocal 가져오기
-    from src.db.models import create_tables
-
-    if not settings.QDRANT_URL or not settings.DATABASE_URL:
-        print("QDRANT_URL or DATABASE_URL is not configured. Exiting.")
+    
+    # --- 의존성 설정 (테스트용) --- 
+    try:
+        from src.db.session import SessionLocal # DB 세션 가져오기
+        from src.db.models import create_tables # 테이블 생성 함수
+        
+        # Qdrant 클라이언트 초기화 (테스트용)
+        # 실제 환경에서는 설정값을 사용해야 함
+        qdrant_cli = QdrantClient(url=settings.QDRANT_URL, api_key=settings.QDRANT_API_KEY)
+        
+        # 사용할 LLM 모델 이름 (테스트용)
+        test_llm_model = settings.AZURE_OPENAI_DEPLOYMENT_GPT4 # 설정값 사용
+        
+        # 필수 설정 확인
+        if not settings.QDRANT_URL or not settings.DATABASE_URL or not test_llm_model:
+             print("Error: QDRANT_URL, DATABASE_URL, or AZURE_OPENAI_DEPLOYMENT_GPT4 is not configured in settings.")
+             exit()
+             
+        # DB 테이블 생성 (필요한 경우)
+        # create_tables() # 실제 실행 시 주석 해제하거나 관리 스크립트 사용
+        
+    except ImportError as ie:
+        print(f"Import error, make sure dependencies are installed and paths are correct: {ie}")
         exit()
-
-    # DB 테이블 생성 (테스트용)
-    create_tables()
-
-    # --- DB에 테스트 세션 및 로그 생성 --- 
+    except Exception as setup_e:
+         print(f"Error during test setup: {setup_e}")
+         exit()
+    # --- DB에 테스트 데이터 생성 --- 
     test_session_uuid = str(uuid.uuid4())
     db = SessionLocal()
     try:
         # 기존 테스트 세션 삭제 (옵션)
         existing_session = db.query(TradingSession).filter(TradingSession.session_uuid == test_session_uuid).first()
         if existing_session:
-             db.delete(existing_session)
-             db.commit()
+            # 연관된 로그도 삭제해야 할 수 있음 (cascade 설정에 따라 다름)
+            db.delete(existing_session)
+            db.commit()
+            logger.info(f"Deleted existing test session {test_session_uuid}")
              
         new_session = TradingSession(
             session_uuid=test_session_uuid,
-            discord_thread_id="discord_thread_12345",
-            discord_user_id="discord_user_67890"
+            discord_thread_id="discord_thread_test_123",
+            discord_user_id="discord_user_test_456"
         )
         db.add(new_session)
         db.flush() # ID를 얻기 위해 flush
+        session_db_id = new_session.id # DB 상의 ID 저장
         
-        log1 = SessionLog(session_id=new_session.id, actor="user", message="KODEX 200 매수해도 될까요?")
-        log2 = SessionLog(session_id=new_session.id, actor="ai", message="현재 시장 상황을 고려할 때 매수는 신중해야 합니다.")
-        log3 = SessionLog(session_id=new_session.id, actor="user", message="알겠습니다. 감사합니다.")
-        db.add_all([log1, log2, log3])
+        logs_data = [
+            ("user", "삼성전자 지금 사도 괜찮을까요?"),
+            ("ai", "현재 삼성전자 주가는 8만원 선에서 등락을 반복하고 있습니다. 최근 반도체 업황 개선 기대감이 있지만, 단기 변동성은 클 수 있습니다. 투자 목표와 기간을 고려하여 신중히 결정하시는 것이 좋습니다."),
+            ("user", "알겠습니다. 그럼 KODEX 200 ETF는 어떤가요?"),
+            ("ai", "KODEX 200은 코스피 200 지수를 추종하는 대표적인 ETF입니다. 분산투자 효과가 있으며 장기적으로 안정적인 성과를 기대할 수 있습니다. 다만, 시장 전체의 등락에 영향을 받습니다."),
+            ("user", "KODEX 200 10주 매수해주세요.")
+        ]
+        
+        for actor, message in logs_data:
+             log = SessionLog(session_id=session_db_id, actor=actor, message=message)
+             db.add(log)
+             
         db.commit()
-        print(f"Created test session {test_session_uuid} with ID {new_session.id} and 3 logs in DB.")
+        logger.info(f"Created test session {test_session_uuid} (DB ID: {session_db_id}) with {len(logs_data)} logs.")
+        
     except Exception as db_e:
-         print(f"Error setting up test data in DB: {db_e}")
-         db.rollback()
-         exit()
+        logger.error(f"Error setting up test data in DB: {db_e}", exc_info=True)
+        db.rollback()
+        exit()
     finally:
-         db.close()
-    # --- End DB Setup ---
+        db.close()
+    # --- End DB Setup --- 
 
     try:
-        # MemoryRAG 인스턴스 생성 (DB 세션 팩토리 전달)
-        memory = MemoryRAG(db_session_factory=SessionLocal)
+        # --- MemoryRAG 인스턴스 생성 --- 
+        memory_rag_instance = MemoryRAG(
+            db_session_factory=SessionLocal, 
+            qdrant_client=qdrant_cli, 
+            llm_model=test_llm_model
+        )
         
         # --- 테스트: 세션 요약 및 저장 --- 
-        print(f"\n--- Summarizing Session {test_session_uuid} --- ")
-        memory.summarize_and_upsert(test_session_uuid)
+        logger.info(f"\n--- Testing Session Summarization for {test_session_uuid} ---")
+        memory_rag_instance.summarize_and_upsert(test_session_uuid)
         
         # --- 확인: Qdrant에서 요약 검색 --- 
-        summary_query = "KODEX 200 관련 대화"
-        summary_results = memory.search_similar(summary_query, limit=1, score_threshold=0.1) # 낮은 임계값으로 설정
-        print(f"\nSearch for summary ('{summary_query}') in Qdrant:")
-        found = False
+        summary_query = "삼성전자와 KODEX 200 ETF 관련 논의"
+        logger.info(f"\n--- Searching Qdrant for summary related to: '{summary_query}' ---")
+        summary_results = memory_rag_instance.search_similar(summary_query, limit=3, score_threshold=0.5)
+        
+        found_in_qdrant = False
         if summary_results:
-             for hit in summary_results:
-                 if hit.payload.get("type") == "session_summary" and hit.payload.get("session_uuid") == test_session_uuid:
-                     print(f"- Found Summary! Score: {hit.score:.4f}")
-                     print(f"  Payload: {hit.payload}")
-                     found = True
-                     break
-        if not found:
-             print("Summary not found in Qdrant or threshold too high.")
+            logger.info(f"Found {len(summary_results)} potential matches in Qdrant:")
+            for hit in summary_results:
+                # 저장된 요약인지 확인 (ID 또는 페이로드 기준)
+                if hit.id == f"summary_{test_session_uuid}":
+                    logger.info(f"- Found matching summary! Score: {hit.score:.4f}, ID: {hit.id}")
+                    logger.info(f"  Payload: {hit.payload}")
+                    found_in_qdrant = True
+                    break # 찾았으므로 중단
+                else:
+                     logger.info(f"- Found non-target item: Score: {hit.score:.4f}, ID: {hit.id}, Type: {hit.payload.get('type')}")
+                     
+        if not found_in_qdrant:
+            logger.warning("Target session summary was not found in Qdrant search results or score was below threshold.")
              
-        # --- 확인: DB에서 세션 상태 확인 --- 
+        # --- 확인: DB에서 세션 상태 및 요약 확인 --- 
+        logger.info(f"\n--- Checking DB for session {test_session_uuid} status and summary ---")
         db = SessionLocal()
         try:
             updated_session = db.query(TradingSession).filter(TradingSession.session_uuid == test_session_uuid).first()
             if updated_session:
-                 print(f"\nSession status in DB: is_active={updated_session.is_active}, end_time={updated_session.end_time}")
-                 print(f"Session summary in DB: {updated_session.summary}")
+                logger.info(f"Session status in DB: is_active={updated_session.is_active}, end_time={updated_session.end_time}")
+                logger.info(f"Session summary in DB: {updated_session.summary}")
+                assert not updated_session.is_active, "Session should be inactive after summarization."
+                assert updated_session.summary is not None and updated_session.summary != "", "Summary should be present in DB."
             else:
-                 print("Session not found in DB after update attempt.")
+                logger.error("Session not found in DB after summarization attempt!")
         finally:
-             db.close()
+            db.close()
+            
+        # --- 테스트: 실행 결과 저장 --- 
+        logger.info("\n--- Testing Execution Result Saving ---")
+        test_execution_results = [
+            {"function_name": "search_stock_info", "status": "success", "result": {"price": 81000, "change": 200}, "session_uuid": test_session_uuid, "timestamp": datetime.datetime.now().isoformat()},
+            {"function_name": "place_order", "status": "success", "result": {"order_id": "ORD123", "filled_qty": 10}, "session_uuid": test_session_uuid, "timestamp": datetime.datetime.now().isoformat()}
+        ]
+        memory_rag_instance.save_execution_results(test_execution_results)
+        
+        # --- 확인: Qdrant에서 실행 결과 검색 --- 
+        exec_query = "place_order function execution"
+        logger.info(f"\n--- Searching Qdrant for execution results related to: '{exec_query}' ---")
+        exec_results = memory_rag_instance.search_similar(exec_query, limit=5, score_threshold=0.5)
+        
+        found_exec_in_qdrant = False
+        if exec_results:
+            logger.info(f"Found {len(exec_results)} potential execution results:")
+            for hit in exec_results:
+                 if hit.payload.get("type") == "execution_result" and hit.payload.get("function_name") == "place_order":
+                     logger.info(f"- Found relevant execution result! Score: {hit.score:.4f}, ID: {hit.id}")
+                     logger.info(f"  Payload: {hit.payload}")
+                     found_exec_in_qdrant = True
+                     # 필요 시 더 많은 결과 확인
+        if not found_exec_in_qdrant:
+             logger.warning("Could not find the specific 'place_order' execution result in Qdrant search.")
 
     except RuntimeError as e:
-         print(f"\nInitialization Error: {e}")
+        logger.critical(f"\nRuntime Error during MemoryRAG test: {e}", exc_info=True)
     except Exception as e:
-        print(f"\nAn unexpected error occurred during the example run: {e}")
-
-    # Verify trade results were saved
-    trade_query = "trade results"
-    trade_search_results = memory.search_similar(trade_query)
-    print(f"\n--- Search Results for '{trade_query}' ---")
-    if trade_search_results:
-        for hit in trade_search_results:
-             if hit.payload.get("type") == "trade_result":
-                print(f"- Score: {hit.score:.4f}, ID: {hit.id}, Payload: {hit.payload}")
-    else:
-         print("No trade results found in memory.") 
+        logger.critical(f"\nAn unexpected error occurred during the MemoryRAG test run: {e}", exc_info=True)
