@@ -9,7 +9,7 @@ from src.brokers.kis import KisBroker
 from src.db.models import TradingSession, SessionLocal
 from src.utils.registry import set_orchestrator
 from src.utils.discord_utils import DiscordRequestType
-from src.discord.bot import send_discord_request  # Placeholder for send_discord_request function
+from src.discord.utils import send_discord_request
 import asyncio
 
 logger = logging.getLogger(__name__)
