@@ -12,7 +12,7 @@ import aiohttp
 import discord
 from discord import Embed, Interaction, Thread, Message, ButtonStyle
 from discord.ext import commands
-from discord.ui import View, Button
+from discord.ui import View, Button, button
 from sqlalchemy import select
 from qdrant_client import QdrantClient
 
@@ -596,7 +596,7 @@ class TradingBot(commands.Bot):
                         del self.active_sessions[thread_id]
 
 # --- Views (Buttons) --- 
-class OrderConfirmationView(ui.View):
+class OrderConfirmationView(View):
     def __init__(self, bot: TradingBot, session_thread_id: int, order_details: dict, db_session_factory):
         super().__init__(timeout=60 * 10) # View timeout after 10 minutes
         self.bot = bot
@@ -616,8 +616,8 @@ class OrderConfirmationView(ui.View):
                  order_confirmed=confirmed
              )
              
-    @ui.button(label="✅ 주문 실행", style=ButtonStyle.green, custom_id="confirm_order")
-    async def confirm_button(self, interaction: Interaction, button: ui.Button):
+    @button(label="✅ 주문 실행", style=ButtonStyle.green, custom_id="confirm_order")
+    async def confirm_button(self, interaction: Interaction, button: Button):
         # Check if the interaction user is the one who started the session
         session_info = self.bot.active_sessions.get(self.session_thread_id)
         if not session_info or interaction.user.id != session_info['user_id']:
@@ -661,8 +661,8 @@ class OrderConfirmationView(ui.View):
              self.bot.active_sessions[self.session_thread_id]['last_interaction_time'] = asyncio.get_event_loop().time()
         self.stop() # Stop the view
 
-    @ui.button(label="❌ 취소", style=ButtonStyle.red, custom_id="cancel_order")
-    async def cancel_button(self, interaction: Interaction, button: ui.Button):
+    @button(label="❌ 취소", style=ButtonStyle.red, custom_id="cancel_order")
+    async def cancel_button(self, interaction: Interaction, button: Button):
         session_info = self.bot.active_sessions.get(self.session_thread_id)
         if not session_info or interaction.user.id != session_info['user_id']:
             await interaction.response.send_message("세션을 시작한 사용자만 취소할 수 있습니다.", ephemeral=True)
