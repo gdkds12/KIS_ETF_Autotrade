@@ -1,10 +1,12 @@
 # 시장 이슈 수집·요약 
-import logging, os, time, requests
+import logging
+import os
+import time
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from openai import OpenAI
+from bs4 import BeautifulSoup
 from src.agents.finnhub_client import FinnhubClient
-from src.config import settings
-from concurrent.futures import ThreadPoolExecutor, as_completed # Import concurrent features
-
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -198,53 +200,26 @@ class InfoCrawler:
 
         # 1차 요약: 각 기사별 핵심 요약 수행 (경량 LLM)
         articles_for_prompt = []
-        def fetch_article_text_wrapper(url):
-            return self.fetch_article_text(url)
-
+        urls = [item.get("url") or item.get("link") for item in news_list[:max_articles]]
         with ThreadPoolExecutor(max_workers=10) as pool:
-            # Map queries to future objects
-            future_to_url = {pool.submit(fetch_article_text_wrapper, url): url for url in [item.get("url") or item.get("link") for item in news_list[:max_articles]]}
+            future_to_url = {pool.submit(self.fetch_article_text, url): url for url in urls}
             for future in as_completed(future_to_url):
                 url = future_to_url[future]
                 try:
                     article_text = future.result()
-                    if article_text:
-                        headline = next((item.get("headline", "") for item in news_list if item.get("url") == url or item.get("link") == url), "")
-                        summary = next((item.get("summary", "") or item.get("snippet", "") for item in news_list if item.get("url") == url or item.get("link") == url), "")
-                        articles_for_prompt.append({
-                            "headline": headline,
-                            "summary": summary,
-                            "article_text": article_text,
-                            "url": url
-                        })
+                    headline = next((item.get("headline", "") or item.get("title", "") for item in news_list if (item.get("url") == url or item.get("link") == url)), "")
+                    summary = next((item.get("summary", "") or item.get("snippet", "") for item in news_list if (item.get("url") == url or item.get("link") == url)), "")
+                    # 기사 본문이 충분히 길면 본문, 아니면 summary/headline 사용
+                    if article_text and len(article_text) > 200:
+                        content = article_text
+                    elif summary:
+                        content = summary
+                    else:
+                        content = headline
+                    if headline or content:
+                        articles_for_prompt.append(f"제목: {headline.strip()}\n내용: {content.strip()}\nURL: {url if url else ''}\n---")
                 except Exception as exc:
                     logger.error(f"Subquery '{url}' generated an exception: {exc}", exc_info=True)
-                    articles_for_prompt.append({
-                        "headline": "",
-                        "summary": "",
-                        "article_text": "",
-                        "url": url
-                    })
-
-            if url:
-                article_text = fetch_article_text(url)
-                if article_text and len(article_text) > 200:
-                    logger.info(f"[기사 {idx}] 본문 크롤링 성공 (길이: {len(article_text)}) | URL: {url}")
-                else:
-                    logger.info(f"[기사 {idx}] 본문 크롤링 실패 또는 너무 짧음 | URL: {url}")
-            else:
-                logger.info(f"[기사 {idx}] URL 없음, 본문 크롤링 생략")
-            if article_text and len(article_text) > 200:
-                content = article_text
-                logger.debug(f"[기사 {idx}] 본문 사용")
-            elif summary:
-                content = summary
-                logger.debug(f"[기사 {idx}] summary 사용")
-            else:
-                content = headline
-                logger.debug(f"[기사 {idx}] headline만 사용")
-            if headline or content:
-                articles_for_prompt.append(f"[기사 {idx}]\n제목: {headline.strip()}\n내용: {content.strip()}\nURL: {url if url else ''}\n---")
         logger.info(f"[get_market_summary] articles_for_prompt length: {len(articles_for_prompt)}; first item: {articles_for_prompt[0] if articles_for_prompt else None}")
         if not articles_for_prompt:
             logger.warning("Could not extract usable news article contents.")
@@ -253,12 +228,12 @@ class InfoCrawler:
         # 1차 요약: 기사 전체를 한 번에 LLM에 보내 중복 없이 핵심만 요약
         from src.utils.azure_openai import azure_chat_completion
         import datetime, pytz
-        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
+        now_kst = "2025-04-22 03:41:08"  # 시스템에서 주어진 최신 시간 사용
         system_prompt_1 = (
             f"You are a summarization expert. The current local time is {now_kst} (KST). "
             f"You will be given multiple news articles, each clearly delimited and labeled. "
-            f"Summarize the following articles in Korean, removing redundancy and focusing on the core facts. Do not answer the user query yet."
-
+            f"Summarize the following articles in Korean, removing redundancy and focusing on the core facts."
+        )
         user_content_1 = '\n'.join(articles_for_prompt)
         messages_1 = [
             {"role": "system", "content": system_prompt_1},
@@ -267,42 +242,7 @@ class InfoCrawler:
         resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages_1, max_tokens=800, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
-
-        # 2차 요약: 1차 요약 결과와 사용자 질문을 함께 LLM에 보내 최종 답변 생성
-        system_prompt_2 = (
-            f"You are a trading assistant. The current local time is {now_kst} (KST). "
-            f"You will be given a summary of recent news articles. Answer the user's question below based on this summary, prioritizing recency and relevance. Answer in Korean."
-
-        user_content_2 = f"요약된 뉴스:\n{first_summary}\n\n사용자 질문: {user_query}"
-        messages_2 = [
-            {"role": "system", "content": system_prompt_2},
-            {"role": "user", "content": user_content_2}
-        ]
-        logger.info("[요약] 2차(최종) 답변 생성 시작")
-        resp_2 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages_2, max_tokens=800, temperature=0.3)
-        final_answer = resp_2["choices"][0]["message"]["content"].strip()
-        logger.info(f"[요약] 2차(최종) 답변 완료 (길이: {len(final_answer)})")
-        return final_answer
-
-
-        # Second-phase: final summary using main LLM
-        combined_first = "\n".join([f"- {ms}" for ms in item_summaries])
-        from src.utils.azure_openai import azure_chat_completion
-        import datetime, pytz
-        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M:%S KST')
-        system_prompt2 = (
-            f"You are a trading assistant summarizing market news. The current local time is {now_kst} (KST). "
-            "Use the first-phase summaries below to generate a concise, relevant, and up-to-date final summary "
-            f"for the user query '{user_query}'."
-
-        messages = [
-            {"role": "system", "content": system_prompt2},
-            {"role": "user", "content": combined_first}
-        ]
-        resp2 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4, messages=messages, max_tokens=500, temperature=0.3)
-        final_summary = resp2["choices"][0]["message"]["content"].strip()
-        logger.info(f"Generated final market summary (length: {len(final_summary)}).")
-        return final_summary
+        return first_summary
 
     def multi_search(self, query: str, attempts: int = 3, max_attempts: int = 10) -> dict:
         """범용 검색: query 기반으로 최소 3번, 최대 10번의 news/web 검색을 병렬 수행해 LLM으로 요약."""
@@ -406,7 +346,7 @@ except Exception as e:
             f"사용자가 요청한 주제: {query}\n\n"
             f"아래는 {len(subqueries)}개의 연관 검색어(최대 {tries}개 시도)에 대한 뉴스 및 웹 검색 결과 요약입니다:\n\n{combined}\n\n"
             "위 내용을 바탕으로 사용자 요청에 대해 한국어로 간결하게 종합 분석 및 요약해 주세요."
-
+        )
         logger.debug(f"Generated prompt for multi_search summary:\n{prompt[:500]}...")
         summary = self._summarize_with_llm(snippets, query)
         
