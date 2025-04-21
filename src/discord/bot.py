@@ -222,8 +222,9 @@ class TradingBot(commands.Bot):
         # Cog 등록 (slash commands)
         await self.add_cog(TradeCog(self))
         guild = discord.Object(id=GUILD_ID)
+        # 길드 전용으로만 커맨드 등록 (글로벌 sync 호출 X)
         await self.tree.sync(guild=guild)
-        logger.info(f"[GUILD {GUILD_ID}] Logged in as {self.user} (ID: {self.user.id})")
+        logger.info(f"[GUILD {GUILD_ID}] Slash commands registered (guild only). Logged in as {self.user} (ID: {self.user.id})")
         logger.info("Bot is ready.")
 
     async def _initialize_orchestrator(self):
