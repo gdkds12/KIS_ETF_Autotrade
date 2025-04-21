@@ -1,10 +1,13 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 import os
 from dotenv import load_dotenv
-from typing import Optional
+from typing import Optional, Any
 
 # .env 파일 로드 (프로젝트 루트에 있다고 가정)
 load_dotenv(override=True)
+
+# Placeholder for the Orchestrator instance
+ORCHESTRATOR: Optional[Any] = None
 
 class Settings(BaseSettings):
     # KIS API Credentials

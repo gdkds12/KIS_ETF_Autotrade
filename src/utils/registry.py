@@ -15,11 +15,9 @@ import inspect
 from typing import Callable, Dict, Any
 import pandas as pd
 import logging
+from src.config import ORCHESTRATOR
 
 COMMANDS: Dict[str, Callable[..., Any]] = {}
-
-# Global runtime object (lazy‑set later)
-ORCHESTRATOR = None  # type: Any
 
 # Utility so main.py can tell us about the live orchestrator
 def set_orchestrator(obj: Any) -> None:
@@ -59,7 +57,6 @@ def command(fn: Callable[..., Any]) -> Callable[..., Any]:
 @command
 def get_balance() -> dict:
     """현재 계좌 예수금·총자산."""
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None:
         return {"error": "orchestrator not ready"}
     return ORCHESTRATOR.broker.get_balance()
@@ -68,7 +65,6 @@ def get_balance() -> dict:
 @command
 def get_positions() -> list:
     """보유 포지션."""
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None:
         return []
     return ORCHESTRATOR.broker.get_positions()
@@ -77,7 +73,6 @@ def get_positions() -> list:
 @command
 def get_market_summary(query: str) -> str:
     """사용자 질의(query)에 맞춘 시장 동향 요약."""
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None:
         return "(orchestrator not ready)"
     # Pass query to info_crawler's method
@@ -86,7 +81,7 @@ def get_market_summary(query: str) -> str:
 @command
 def search_symbols(query: str) -> str:
     """종목명 또는 심볼로 주식/ETF를 검색합니다. Searches for stocks/ETFs by name or symbol."""
-    from src.config import ORCHESTRATOR
+    logger = logging.getLogger(__name__)
     logger.info(f"[search_symbols] Searching for symbol/company: {query}")
     try:
         # Use Finnhub for symbol lookup as it handles names better
@@ -120,7 +115,6 @@ def get_quote(symbol: str) -> str:
     Returns:
         The current quote information.
     """
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None or not hasattr(ORCHESTRATOR, 'kis'):
         return "(Orchestrator or KIS interface not ready)"
     is_foreign = ORCHESTRATOR.kis.is_overseas_symbol(symbol)
@@ -135,7 +129,6 @@ def get_quote(symbol: str) -> str:
 @command
 def get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: str, period: str) -> list:
     """과거 시세 데이터 조회 (일·주·월봉 등)."""
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None:
         return []
     # period는 문자열로 들어오므로 int 변환
@@ -151,7 +144,6 @@ def get_historical_data(symbol: str, timeframe: str, start_date: str, end_date: 
 @command
 def order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell_code: str) -> dict:
     """현금 주문 실행 (시장가·지정가)."""
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None:
         return {"error": "orchestrator not ready"}
     return ORCHESTRATOR.broker.order_cash(
@@ -165,7 +157,6 @@ def order_cash(symbol: str, quantity: str, price: str, order_type: str, buy_sell
 @command
 def get_overseas_trading_status() -> dict:
     """해외 주식(ETF 포함) 거래 가능 여부 조회."""
-    from src.config import ORCHESTRATOR
     if ORCHESTRATOR is None:
         return {"error": "orchestrator not ready"}
     return ORCHESTRATOR.broker.get_overseas_status()

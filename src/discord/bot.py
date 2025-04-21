@@ -298,8 +298,29 @@ class TradingBot(commands.Bot):
         return intents
 
     async def setup_hook(self):
-        # Orchestrator 초기화 및 등록
-        await self._initialize_orchestrator()
+        # Initialize Orchestrator here and assign to config
+        logger.info("Initializing Orchestrator...")
+        try:
+            orchestrator = Orchestrator(
+                broker=KisBroker(
+                    app_key=settings.APP_KEY,
+                    app_secret=settings.APP_SECRET,
+                    base_url=(settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL),
+                    cano=settings.CANO,
+                    acnt_prdt_cd=settings.ACNT_PRDT,
+                    virtual_account=settings.KIS_VIRTUAL_ACCOUNT
+                ),
+                db_session_factory=SessionLocal,
+                qdrant_client=QdrantClient(
+                    url=settings.QDRANT_URL,
+                    api_key=settings.QDRANT_API_KEY
+                )
+            )
+            set_orchestrator(orchestrator)
+            logger.info("Orchestrator initialized successfully.")
+        except Exception as e:
+            logger.critical(f"Failed to initialize Orchestrator: {e}", exc_info=True)
+            exit() # Exit if orchestrator fails
 
         # Cog 등록 (slash commands)
         await self.add_cog(TradeCog(self))
@@ -308,39 +329,6 @@ class TradingBot(commands.Bot):
         await self.tree.sync(guild=guild)
         logger.info(f"[GUILD {GUILD_ID}] Slash commands registered (guild only). Logged in as {self.user} (ID: {self.user.id})")
         logger.info("Bot is ready.")
-
-    async def _initialize_orchestrator(self):
-        """Orchestrator를 초기화하고 에이전트와 연결합니다."""
-        try:
-            # KIS Broker 인스턴스 생성
-            is_virtual = settings.KIS_VIRTUAL_ACCOUNT
-            broker = KisBroker(
-                app_key=settings.APP_KEY,
-                app_secret=settings.APP_SECRET,
-                base_url=(settings.KIS_VIRTUAL_URL if is_virtual else settings.BASE_URL),
-                cano=settings.CANO,
-                acnt_prdt_cd=settings.ACNT_PRDT,
-                virtual_account=is_virtual
-            )
-
-            # Qdrant client 인스턴스 생성
-            qdrant_client = QdrantClient(
-                url=settings.QDRANT_URL,
-                api_key=settings.QDRANT_API_KEY
-            )
-
-            # Orchestrator 초기화
-            orchestrator = Orchestrator(
-                broker=broker,
-                db_session_factory=self.db_session_factory,
-                qdrant_client=qdrant_client
-            )
-            set_orchestrator(orchestrator)
-            logger.info("Orchestrator initialized and connected.")
-
-        except Exception as e:
-            logger.error("Error initializing orchestrator", exc_info=True)
-            raise e
 
     async def on_ready(self):
         logger.info(f"{self.user} has connected to Discord!")
