@@ -2,35 +2,48 @@
 # Exact versions might need adjustments based on further testing and compatibility checks.
 # Use `pip freeze > requirements.lock` or poetry/pipenv for more robust dependency management.
 
+# Core Web Framework
 fastapi>=0.110.0,<0.111.0
 uvicorn[standard]>=0.29.0,<0.30.0
 pydantic-settings>=2.2.0,<2.3.0
 python-dotenv>=1.0.0,<1.1.0
-requests>=2.31.0,<2.32.0
-feedparser>=6.0.10,<6.1.0
-sentence-transformers>=2.7.0,<2.8.0
-qdrant-client>=1.8.0,<1.9.0
-tenacity>=8.2.0,<8.3.0
+
+# HTTP / Feed
+requests>=2.31.0,<2.32.0  # HTTP 클라이언트
+feedparser>=6.0.10,<6.1.0  # RSS 파싱
+beautifulsoup4>=4.12.0,<4.13.0  # HTML 파싱 (BeautifulSoup4)
+
+# Core Components
+sentence-transformers>=2.7.0,<2.8.0  # 임베딩 생성
+qdrant-client>=1.8.0,<1.9.0      # 벡터 DB 클라이언트
+tenacity>=8.2.0,<8.3.0          # 재시도 로직
+
+# Data Processing
 pandas>=2.2.0,<2.3.0
 numpy>=1.26.0,<1.27.0
+
+# Discord Bot
 discord.py>=2.3.0,<2.4.0
+aiohttp>=3.9.0,<3.10.0           # Discord HTTP 요청
+
+# Database
 SQLAlchemy>=2.0.0,<2.1.0
-psycopg2-binary>=2.9.0,<2.10.0 # For PostgreSQL connection
-alembic>=1.13.0,<1.14.0 # For DB migrations
-aiohttp>=3.9.0,<3.10.0 # For discord bot http requests
-finnhub-python>=2.4.0,<2.5.0 # Remove Finnhub client library
+psycopg2-binary>=2.9.0,<2.10.0   # PostgreSQL 연결
+alembic>=1.13.0,<1.14.0          # DB 마이그레이션
 
-# LLM Libraries
-openai>=1.17.0
-# google-generativeai>=0.5.0,<0.6.0
-# transformers>=4.39.0,<4.40.0
-# torch>=2.2.0,<2.3.0 # Dependency for some transformers models
+# Financial / Trading APIs
+finnhub-python>=2.4.0,<2.5.0    # Finnhub 클라이언트
+kis-openapi>=0.3.0              # KIS OpenAPI 클라이언트 (가상)
 
-# Optional/Development Dependencies
-# pytest>=8.0.0,<8.1.0
-# vcrpy>=5.0.0,<5.1.0 # For KIS API mocking in tests
+# LLM Integration
+openai>=1.17.0                 # OpenAI API
 
-# 필요한 패키지 목록 
+# Development / Optional
+pytest>=8.0.0,<8.1.0
+vcrpy>=5.0.0,<5.1.0            # API mocking
+
+# Azure SDK 관련 패키지 제거됨 (불필요 시 제거 유지)
+
 
 # Google Custom Search API 및 필수 패키지
 requests>=2.31.0,<2.32.0
