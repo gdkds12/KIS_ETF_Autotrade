@@ -4,10 +4,11 @@ import os
 import time
 import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from openai import OpenAI
 from bs4 import BeautifulSoup
 from src.agents.finnhub_client import FinnhubClient
 from src.config import settings
+import datetime
+import pytz
 
 logger = logging.getLogger(__name__)
 
@@ -72,70 +73,6 @@ class InfoCrawler:
             logger.error(f"[fetch_article_text] Error fetching article from {url}: {e}", exc_info=True)
             return ""
 
-
-                messages=messages,
-                **get_temperature_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 0.0),
-                **get_token_param(settings.LLM_LIGHTWEIGHT_TIER_MODEL, 100)
-            )
-
-    
-            translation = resp.choices[0].message.content.strip()
-            logger.info(f"Translated query to English: {translation}")
-            return translation
-        except Exception as e:
-            logger.error(f"Translation failed: {e}", exc_info=True)
-            return text
-
-
-    def _summarize_with_llm(self, snippets, query):
-        """LLM을 사용하여 수집된 스니펫을 요약합니다."""
-        if not snippets:
-            return "(수집된 정보가 없습니다)"
-            
-        # 정보가 너무 많으면 LLM 토큰 한도를 초과할 수 있으므로 제한
-        combined_text = "\n---\n".join(snippets[:20])  # 최대 20개 스니펫으로 제한
-        
-        try:
-            # OpenAI에 직접 요약 요청
-            from openai import OpenAI
-            # Azure OpenAI 전역 설정
-            openai.api_type = "azure"
-            openai.api_base = settings.AZURE_OPENAI_ENDPOINT
-            openai.api_version = settings.AZURE_OPENAI_API_VERSION
-            openai.api_key = settings.AZURE_OPENAI_API_KEY
-            # 클라이언트는 api_key만 전달
-            client = OpenAI(api_key=settings.AZURE_OPENAI_API_KEY)
-
-            
-            system_prompt = """
-당신은 수집된 정보를 명확하고 간결하게 요약하는 전문가입니다.
-수집된 텍스트 조각들을 분석하여 일관된 요약을 생성하세요.
-서로 모순되는 정보가 있으면 그 점을 명시하고,
-날짜나 시간이 언급된 경우 가장 최신 정보에 더 가중치를 두세요.
-가능한 한 객관적으로 정보를 요약하되, 명확한 추세가 보이면 결론도 포함하세요.
-"""
-            user_prompt = f"다음 정보를 바탕으로 '{query}'에 대해 요약해주세요:\n\n{combined_text}"
-            
-            # Use lightweight tier model for summarization
-            model_name = settings.LLM_LIGHTWEIGHT_TIER_MODEL
-            resp = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                **get_temperature_param(model_name, 0.3),
-                **get_token_param(model_name, 500),
-            )  # ← 닫는 괄호 추가
-            summary = resp.choices[0].message.content.strip()
-            logger.info("Received summary from OpenAI.")
-            return summary
-        except openai.APIError as e:
-             logger.error(f"OpenAI API Error during summarization: {e}", exc_info=True)
-             return f"(OpenAI API 오류: {e})"
-        except Exception as e:
-            logger.error(f"OpenAI summarization failed: {e}", exc_info=True)
-            return f"(요약 불가: {e})"
 
     def get_market_summary(self, user_query: str, max_articles: int = 5) -> str:
         logger.info(f"[get_market_summary] called with user_query={user_query!r} max_articles={max_articles}")
@@ -211,8 +148,10 @@ class InfoCrawler:
 
         # 1차 요약: 기사 전체를 한 번에 LLM에 보내 중복 없이 핵심만 요약
         from src.utils.azure_openai import azure_chat_completion
-        import datetime, pytz
-        now_kst = "2025-04-22 03:41:08"  # 시스템에서 주어진 최신 시간 사용
+        
+        # 실시간 KST 시간 가져오기
+        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+        
         system_prompt_1 = (
             f"You are a summarization expert. The current local time is {now_kst} (KST). "
             f"You will be given multiple news articles, each clearly delimited and labeled. "
