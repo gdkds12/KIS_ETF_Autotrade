@@ -16,6 +16,8 @@ from src.agents.orchestrator import Orchestrator # Import Orchestrator
 from src.db.models import SessionLocal, engine, create_tables # Assuming DB setup
 from qdrant_client import QdrantClient
 from src.utils.registry import set_orchestrator
+from src.tools.finnhub import FinnhubClient # 추가: Finnhub 클라이언트 임포트
+from src.agents.memory_rag import MemoryRAG # 추가: Memory RAG 임포트
 
 # --- 로깅 설정 --- 
 logging.basicConfig(level=logging.INFO, 
@@ -68,6 +70,15 @@ async def lifespan(app: FastAPI):
         app_state['broker'] = broker
         logger.info("Broker initialized.")
 
+        # --- Initialize Finnhub Client ---
+        if settings.FINNHUB_API_KEY:
+            finnhub_client = FinnhubClient(api_key=settings.FINNHUB_API_KEY)
+            app_state['finnhub_client'] = finnhub_client
+            logger.info("Finnhub client initialized.")
+        else:
+            logger.warning("FINNHUB_API_KEY not found in settings. Finnhub features will be unavailable.")
+            app_state['finnhub_client'] = None
+
         # --- Initialize Qdrant Client --- 
         try:
             qdrant_client = QdrantClient(
@@ -82,52 +93,78 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Failed to initialize Qdrant client: {e}. Orchestrator RAG features might fail.", exc_info=True)
             app_state['qdrant_client'] = None
+            
+        # --- Initialize Memory RAG --- 
+        # Memory RAG는 Qdrant Client가 필요할 수 있음
+        if app_state.get('qdrant_client'):
+            try:
+                memory_rag = MemoryRAG(
+                    qdrant_client=app_state['qdrant_client'],
+                    # 필요한 다른 설정 전달 (예: embedding model)
+                    # embedding_model_name=settings.EMBEDDING_MODEL_NAME 
+                )
+                app_state['memory_rag'] = memory_rag
+                logger.info("Memory RAG initialized.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Memory RAG: {e}. RAG features might fail.", exc_info=True)
+                app_state['memory_rag'] = None
+        else:
+             logger.warning("Qdrant client not available. Memory RAG initialization skipped.")
+             app_state['memory_rag'] = None
 
         # --- Initialize Orchestrator --- 
-        # Pass dependencies: broker, db_session_factory, qdrant_client
+        # Pass dependencies: broker, db_session_factory, qdrant_client, finnhub_client, memory_rag
         orchestrator = Orchestrator(
             broker=app_state['broker'],
             db_session_factory=SessionLocal, # Pass the factory
-            qdrant_client=app_state['qdrant_client'] 
+            qdrant_client=app_state.get('qdrant_client'), # Use .get() for safety
+            finnhub_client=app_state.get('finnhub_client'), # 추가
+            memory_rag=app_state.get('memory_rag') # 추가
         )
         app_state['orchestrator'] = orchestrator
-        logger.info("Orchestrator initialized.")
+        set_orchestrator(orchestrator) # Register orchestrator globally
+        logger.info("Orchestrator initialized and registered.")
 
-        # 💡 make wrappers aware of this live instance
-        set_orchestrator(orchestrator)
+        # Start background tasks if needed (e.g., Discord bot)
+        # discord_bot_task = asyncio.create_task(start_discord_bot(orchestrator))
+        # background_tasks.add(discord_bot_task)
+        # discord_bot_task.add_done_callback(background_tasks.discard)
 
-        # --- Start Background Task REMOVED --- 
-        # The periodic run is no longer scheduled automatically on startup.
-        # logger.info("Automatic periodic orchestrator task is disabled.")
-
-        yield # Application is running
+        yield # Application is ready to serve requests
 
     except Exception as e:
         logger.error(f"Error during application startup: {e}", exc_info=True)
-        # Ensure cleanup happens even if startup fails partially
-    finally:
-        # --- Shutdown Logic --- 
-        logger.info("Application shutdown...")
-        # Gracefully cancel background tasks if any were started
-        # for task in list(background_tasks):
-        #     if not task.done(): task.cancel()
-        # if background_tasks:
-        #      logger.info(f"Waiting for {len(background_tasks)} background tasks to cancel...")
-        #      await asyncio.gather(*background_tasks, return_exceptions=True)
-        #      logger.info("Background tasks cancelled.")
-
-        if 'broker' in app_state and app_state['broker']:
-            await asyncio.to_thread(app_state['broker'].close)
-            logger.info("Broker session closed.")
+        # Ensure partial resources are cleaned up if startup fails mid-way
+        if 'broker' in app_state:
+            await app_state['broker'].close_session()
         if 'qdrant_client' in app_state and app_state['qdrant_client']:
-             try:
-                 # Qdrant client might not have an explicit close, depends on implementation
-                 # app_state['qdrant_client'].close()
-                 logger.info("Qdrant client resources released (if applicable).")
-             except Exception as q_close_e:
-                  logger.warning(f"Error closing Qdrant client: {q_close_e}")
+             # Qdrant client might not have an explicit close in the sdk
+             logger.info("Qdrant client resources released (if applicable).")
+        # Re-raise the exception to signal FastAPI lifespan failure
+        raise e
+
+    # --- Shutdown Logic --- 
+    logger.info("Application shutdown...")
+    # Gracefully cancel background tasks if any were started
+    # for task in list(background_tasks):
+    #     if not task.done(): task.cancel()
+    # if background_tasks:
+    #      logger.info(f"Waiting for {len(background_tasks)} background tasks to cancel...")
+    #      await asyncio.gather(*background_tasks, return_exceptions=True)
+    #      logger.info("Background tasks cancelled.")
+
+    if 'broker' in app_state and app_state['broker']:
+        await asyncio.to_thread(app_state['broker'].close)
+        logger.info("Broker session closed.")
+    if 'qdrant_client' in app_state and app_state['qdrant_client']:
+         try:
+             # Qdrant client might not have an explicit close, depends on implementation
+             # app_state['qdrant_client'].close()
+             logger.info("Qdrant client resources released (if applicable).")
+         except Exception as q_close_e:
+              logger.warning(f"Error closing Qdrant client: {q_close_e}")
                   
-        logger.info("Application shutdown complete.")
+    logger.info("Application shutdown complete.")
 
 # --- Pydantic Models for API --- 
 class OrderConfirmationPayload(BaseModel):
