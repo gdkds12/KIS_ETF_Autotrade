@@ -16,7 +16,7 @@ from src.agents.orchestrator import Orchestrator # Import Orchestrator
 from src.db.models import SessionLocal, engine, create_tables # Assuming DB setup
 from qdrant_client import QdrantClient
 from src.utils.registry import set_orchestrator
-from src.tools.finnhub import FinnhubClient # 추가: Finnhub 클라이언트 임포트
+from src.agents.finnhub_client import FinnhubClient # 수정: 임포트 경로 변경
 from src.agents.memory_rag import MemoryRAG # 추가: Memory RAG 임포트
 
 # --- 로깅 설정 --- 
