@@ -168,7 +168,7 @@ class InfoCrawler:
         from src.utils.azure_openai import azure_chat_completion
         
         # 실시간 KST 시간 가져오기
-        now_kst = datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
         system_prompt_1 = (
             f"You are a professional financial news summarizer. The current local time is {now_kst} (KST). "
