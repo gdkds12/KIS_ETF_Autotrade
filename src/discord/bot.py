@@ -318,15 +318,18 @@ class TradingBot(commands.Bot):
             logger.info(f"MemoryRAG initialized with DB factory, Qdrant, and LLM model: {settings.AZURE_OPENAI_DEPLOYMENT_GPT4}")
 
             # Initialize KisBroker
+            # Determine base_url based on virtual account setting
+            base_url = settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL
             broker = KisBroker(
                 app_key=settings.APP_KEY, 
                 app_secret=settings.APP_SECRET, 
+                base_url=base_url, # 추가: base_url 전달
                 virtual_account=settings.KIS_VIRTUAL_ACCOUNT,
-                account_no=settings.CANO, 
-                account_prod_code=settings.ACNT_PRDT
+                cano=settings.CANO, # 수정: account_no -> cano
+                acnt_prdt_cd=settings.ACNT_PRDT # 수정: account_prod_code -> acnt_prdt_cd
             )
             # Select the correct URL for logging based on the setting
-            active_kis_url = settings.KIS_VIRTUAL_URL if settings.KIS_VIRTUAL_ACCOUNT else settings.BASE_URL
+            active_kis_url = base_url # Use the determined base_url for logging
             logger.info(f"KisBroker initialized for {'Virtual' if settings.KIS_VIRTUAL_ACCOUNT else 'Real'} Trading (URL: {active_kis_url}).")
 
             # Initialize Orchestrator with all components

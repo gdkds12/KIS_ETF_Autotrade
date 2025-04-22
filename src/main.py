@@ -102,6 +102,8 @@ async def lifespan(app: FastAPI):
                     qdrant_client=app_state['qdrant_client'],
                     # 필요한 다른 설정 전달 (예: embedding model)
                     # embedding_model_name=settings.EMBEDDING_MODEL_NAME 
+                    db_session_factory=SessionLocal, # 추가
+                    llm_model=settings.AZURE_OPENAI_DEPLOYMENT_GPT4 # 추가 (설정값 확인 필요)
                 )
                 app_state['memory_rag'] = memory_rag
                 logger.info("Memory RAG initialized.")
