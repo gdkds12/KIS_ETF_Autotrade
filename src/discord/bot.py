@@ -153,6 +153,13 @@ class TradeCog(commands.Cog):
         await interaction.response.send_message(
             f"새로운 트레이딩 세션 스레드를 시작했습니다: {thread.mention}"
         )
+        # 단계별 상태 업데이트용 임베드 생성 및 메시지 ID 저장
+        status_embed = Embed(title="🔄 작업 상태", color=0x5865f2)
+        for stage in ("잔고조회", "주문검증", "주문실행"):
+            status_embed.add_field(name=stage, value=ICON['pending'], inline=False)
+        status_msg = await thread.send(embed=status_embed)
+        # 세션에 status_msg_id 저장
+        self.bot.active_sessions[thread.id]['status_msg_id'] = status_msg.id
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
@@ -164,7 +171,8 @@ class TradeCog(commands.Cog):
             await interaction.followup.send("Orchestrator가 준비되지 않았습니다.")
             return
 
-        # 2. status_notifier를 InfoCrawler의 6단계 키와 1:1 매핑
+        # 2. status_notifier를 InfoCrawler의 6단계 키와 1:1 매핑 (메인 루프 캡처)
+        loop = asyncio.get_running_loop()
         def status_notifier(key: str):
             mapping = {
                 "기사 수집 중":      "🟡 기사 수집 중...",
@@ -177,7 +185,7 @@ class TradeCog(commands.Cog):
             if content := mapping.get(key):
                 asyncio.run_coroutine_threadsafe(
                     sent_msg.edit(content=content),
-                    asyncio.get_running_loop()
+                    loop
                 )
         orchestrator.info_crawler.status_notifier = status_notifier
 
@@ -259,16 +267,23 @@ class TradeCog(commands.Cog):
         assistant_msg = resp["choices"][0]["message"]
 
         # ---------- 함수 호출인지 확인 ----------
-        tool_calls = assistant_msg.get("tool_calls")
         function_call = assistant_msg.get("function_call")
-        if tool_calls or function_call:
-            status_msg = None  # 항상 미리 선언
-            if message.author.bot:
+        if function_call:
+            # 1) 함수 이름과 인자 로드
+            func_name = function_call["name"]
+            args_json = function_call.get("arguments", "")
+            try:
+                args_dict = json.loads(args_json)
+            except json.JSONDecodeError:
+                await message.channel.send("함수 호출 인자 파싱에 실패했습니다.")
+                return
+            # 2) 레지스트리에서 함수 객체 조회
+            from src.utils.registry import COMMANDS
+            if func_name not in COMMANDS:
                 await message.channel.send(f"알 수 없는 함수 호출: {func_name}")
                 return
-
-            # 동기 함수 실행은 executor 로
-            # 키워드 인자를 functools.partial을 사용하여 함수에 바인딩
+            func = COMMANDS[func_name]
+            # 3) 동기 함수 실행은 executor 로
             import functools
             bound_func = functools.partial(func, **args_dict)
             result = await loop.run_in_executor(None, bound_func)
