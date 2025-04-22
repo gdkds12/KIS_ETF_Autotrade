@@ -39,10 +39,11 @@ class TradeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    async def _update_tool_status(self, thread_id: int, tool_name: str, status: str):
+    async def _update_tool_status(self, thread_id: int, tool_name: str, status: str, description: str = None):
         """
         지정된 스레드의 상태 메시지를 수정하여 tool_name 단계를 업데이트합니다.
         status는 'pending'|'in_progress'|'completed'|'error' 중 하나.
+        description이 주어지면 embed description도 갱신합니다.
         """
         sess = self.bot.active_sessions.get(thread_id)
         if not sess:
@@ -54,6 +55,8 @@ class TradeCog(commands.Cog):
             if field.name == tool_name:
                 embed.set_field_at(i, name=tool_name, value=ICON[status], inline=False)
                 break
+        if description is not None:
+            embed.description = description
         await msg.edit(embed=embed)
 
     @app_commands.command(name="balance", description="현재 계좌의 잔고(예수금, 총자산 등)를 조회합니다.")
@@ -162,14 +165,25 @@ class TradeCog(commands.Cog):
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
         thread_id = interaction.channel.id
-        await self._update_tool_status(thread_id, "시장조사", "in_progress")
+        await self._update_tool_status(thread_id, "시장조사", "in_progress", description="시장조사 진행중...")
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
             await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
-            await self._update_tool_status(thread_id, "시장조사", "error")
+            await self._update_tool_status(thread_id, "시장조사", "error", description="시장조사 오류")
             return
 
-        # get_market_summary() 는 동기 함수이므로 블로킹 방지
+        # status_notifier 콜백 정의
+        async def status_notifier(msg):
+            # msg 예: '기사 내용 수집중', '5개 기사 수집완료', ...
+            await self._update_tool_status(thread_id, "시장조사", "in_progress", description=f"시장조사: {msg}")
+
+        # 동기 함수에 async 콜백을 넘기려면 래퍼 필요
+        from functools import partial
+        def notifier_sync(msg):
+            asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
+
+        orchestrator.info_crawler.status_notifier = notifier_sync
+
         import asyncio
         loop = asyncio.get_running_loop()
         summary = await loop.run_in_executor(
@@ -184,7 +198,8 @@ class TradeCog(commands.Cog):
             timestamp=datetime.now(timezone.utc)
         )
         await interaction.response.send_message(embed=embed)
-        await self._update_tool_status(thread_id, "시장조사", "completed")
+        await self._update_tool_status(thread_id, "시장조사", "completed", description="시장조사 완료")
+
 
     @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
     async def confirm_order(self, interaction: Interaction, order_details: str):
