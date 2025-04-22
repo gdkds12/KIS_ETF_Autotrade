@@ -184,7 +184,7 @@ class InfoCrawler:
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
         # 기사 내용 크롤링 시작
-        throttled_notify("크롤링중")
+        throttled_notify("기사 크롤링중")
         # 기사 본문 크롤링 및 요약 준비
         articles_for_prompt = []
         urls = [item.get("url") for item in merged_news]
@@ -246,7 +246,7 @@ class InfoCrawler:
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
         # 요약 완료 알림
         if self.status_notifier:
-            self.status_notifier("요약완료")
+            self.status_notifier("요약 완료")
         return first_summary
 
 

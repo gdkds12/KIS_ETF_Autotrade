@@ -263,10 +263,35 @@ class TradeCog(commands.Cog):
             if tool_calls:
                 # 최신 스펙 (role: tool/tool_call_id)
                 tool_call = tool_calls[0]
-                func_name = tool_call["function"].get("name") or tool_call.get("name")
-                args = tool_call.get("arguments")
-                tool_call_id = tool_call.get("id")
+                func_name = tool_calls and tool_calls[0]["function"].get("name") or function_call["name"]
+                args = tool_calls and tool_calls[0]["arguments"] or function_call["arguments"]
                 args_dict = _json.loads(args) if isinstance(args, str) else args
+
+                # — get_market_summary 호출 시 상태 메시지 준비 —
+                status_msg = None
+                if func_name == "get_market_summary":
+                    # 1) 초기 상태 메시지 전송
+                    status_msg = await message.channel.send("🟡 기사 수집 중...")
+
+                    # 2) 단계별 상태 편집 콜백 정의
+                    async def status_notifier(step: str):
+                        if not status_msg:
+                            return
+                        mapping = {
+                            "기사 수집중":   "🟡 기사 수집 중...",
+                            "기사 수집 완료": "✅ 기사 수집 완료!",
+                            "기사 크롤링중": "🟡 기사 크롤링 중...",
+                            "기사 크롤링 완료": "✅ 기사 크롤링 완료!",
+                            "요약중":       "🟡 요약 중...",
+                            "요약 완료":     "✅ 요약 완료!"
+                        }
+                        content = mapping.get(step)
+                        if content:
+                            await status_msg.edit(content=content)
+
+                    # 3) InfoCrawler에 콜백 등록
+                    from src.utils.registry import ORCHESTRATOR
+                    ORCHESTRATOR.info_crawler.status_notifier = lambda msg: asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
             else:
                 # 구버전 (role: function)
                 func_name = function_call["name"]
@@ -286,6 +311,11 @@ class TradeCog(commands.Cog):
             import functools
             bound_func = functools.partial(func, **args_dict)
             result = await loop.run_in_executor(None, bound_func)
+
+            # — get_market_summary 완료 후, 최종 요약으로 메시지 덮어쓰기 —
+            if func_name == "get_market_summary" and status_msg:
+                final_summary = result if isinstance(result, str) else str(result)
+                await status_msg.edit(content=final_summary)
             # content는 반드시 문자열이어야 함
             result_str = result if isinstance(result, str) else _json.dumps(result, ensure_ascii=False, default=str)
 
