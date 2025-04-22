@@ -260,6 +260,7 @@ class TradeCog(commands.Cog):
         tool_calls = assistant_msg.get("tool_calls")
         function_call = assistant_msg.get("function_call")
         if tool_calls or function_call:
+            status_msg = None  # 항상 미리 선언
             if tool_calls:
                 # 최신 스펙 (role: tool/tool_call_id)
                 tool_call = tool_calls[0]
@@ -268,7 +269,6 @@ class TradeCog(commands.Cog):
                 args_dict = _json.loads(args) if isinstance(args, str) else args
 
                 # — get_market_summary 호출 시 상태 메시지 준비 —
-                status_msg = None
                 if func_name == "get_market_summary":
                     # 1) 초기 상태 메시지 전송
                     status_msg = await message.channel.send("🟡 기사 수집 중...")
