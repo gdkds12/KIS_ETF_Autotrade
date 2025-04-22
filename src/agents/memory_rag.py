@@ -1,4 +1,4 @@
-# Qdrant 벡터 저장·검색
+# Qdrant 벡터 저장·검색 memory_rag.py
 import logging
 import uuid
 import datetime

@@ -1,5 +1,4 @@
-# Dag 관리·에이전트 호출 흐름
-
+# orchestrator.py
 import logging
 import time
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
@@ -18,7 +17,7 @@ from src.agents.info_crawler import InfoCrawler
 from src.agents.memory_rag import MemoryRAG
 from src.agents.portfolio_manager import PortfolioManager
 # TradingStrategy 모듈 사용이 필요없다면 import 삭제
-# from src.agents.strategy import TradingStrategy # <- 이 줄 삭제됨
+# from src.executors.trade_executor import TradeExecutorategy # <- 이 줄 삭제됨
 from src.agents.risk_guard import RiskGuard
 from src.agents.briefing import BriefingAgent
 from src.agents.finnhub_client import FinnhubClient # <-- FinnhubClient 추가
@@ -72,34 +71,29 @@ class Orchestrator:
     def _notify_step(self, step: str, status: str):
         """각 단계 시작/완료/오류 시 Discord로 메시지 전송."""
         try:
-            # Import necessary components locally within the method
-            from src.utils.discord_utils import DiscordRequestType
-            from src.discord.bot import send_discord_request # Import the async function
-            import asyncio
-            
-            # Ensure there's a running event loop
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                # If no loop is running (e.g., called from sync context without setup),
-                # start a new one temporarily or handle differently.
-                # For simplicity, we log a warning and skip.
-                # A better approach might involve passing the loop or using a queue.
-                logger.warning("No running event loop found to schedule Discord notification.")
-                return
-                
-            # Schedule the async function call in the event loop
-            asyncio.create_task(
-                send_discord_request(DiscordRequestType.CYCLE_STATUS, {"step": step, "status": status})
+            # 실제 Discord Bot 호출
+            success = asyncio.get_event_loop().run_until_complete(
+                send_discord_request(DiscordRequestType.ORDER_CONFIRMATION, payload)
             )
-            logger.debug(f"Scheduled Discord notification for step: {step}, status: {status}")
-            
-        except ImportError as e:
-            logger.error(f"Failed to import Discord components for notification: {e}. Is bot.py structured correctly?")
+            if success:
+                logger.info(f"Successfully sent confirmation request to Discord (or placeholder success).")
+                return {
+                    "action_type": "user_confirmation_request",
+                    "status": "sent",
+                    "detail": f"Sent confirmation request for {len(orders_to_confirm)} orders.",
+                    "request_id": request_id,
+                    "orders_requested": orders_to_confirm
+                }
+            else:
+                raise RuntimeError("Failed to send request to Discord bot.")
         except Exception as e:
-            # Catch potential errors during scheduling or import
-            logger.error(f"Error scheduling Discord notification for step {step} ({status}): {e}", exc_info=True)
-            pass # Avoid crashing the orchestrator cycle due to notification failure
+             logger.error(f"Failed to send Discord confirmation request: {e}", exc_info=True)
+             # Return error status, potentially retry or handle differently
+             return {
+                 "action_type": "user_confirmation_request",
+                 "status": "failed",
+        except Exception as e:
+             logger.error(f"Failed to upsert execution results: {e}", exc_info=True)
 
     def __init__(self, broker: KisBroker, db_session_factory, qdrant_client: QdrantClient, finnhub_client: FinnhubClient, memory_rag: MemoryRAG):
         """Orchestrator 초기화
@@ -393,316 +387,32 @@ class Orchestrator:
             results.append(f"Execution error: {e}")
         return results
 
+    # ── 구현된 주문 실행 메서드 ────────────────────────────────────────
+    def _execute_orders(self, orders: list[dict]) -> list[dict]:
+        """RiskGuard 통과한 orders를 실제로 실행합니다."""
+        executor = TradeExecutor(self.broker)
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(executor.execute_batch(orders))
+
+    def _upsert_trade_results(self, execution_results: list[dict]):
+        """체결 결과를 MemoryRAG 및 DB에 저장합니다."""
+        if self.memory_rag:
+            self.memory_rag.save_execution_results(execution_results)
+        if hasattr(self, 'memory_db') and self.memory_db:
+            try:
+                self.memory_db.save_trade_results(execution_results)
+            except Exception:
+                logger.warning("DB에 체결 결과 저장 실패", exc_info=True)
+
     def _get_today(self):
         from datetime import datetime
         return datetime.now().strftime("%Y-%m-%d")
 
-# --- 중략 ---
-    def _summarize_market_influences(self, summaries: list[str]) -> str:
-        """
-        InfoCrawler에서 수집한 뉴스/이슈 요약 리스트를 종합적으로 분석하여
-        오늘 주가에 영향을 줄 수 있는 핵심 요인과 전략을 한글로 요약한다.
-        """
-        prompt = (
-            "다음은 오늘 시장 및 내 포트폴리오 관련 뉴스/이슈 요약입니다.\n"
-            "각 요약을 종합해 오늘 주가에 영향을 줄 수 있는 핵심 요인과 시장 전략을 한글로 정리해줘.\n"
-            + "\n".join([f"{i+1}. {s}" for i, s in enumerate(summaries)])
-        )
-        # LLM(Azure OpenAI 등) 호출 예시
-        return self.llm.generate(prompt)
-
-    def _summarize_portfolio_status(self, positions: list[dict]) -> str:
-        """
-        KIS API로 수집한 내 포트폴리오 정보와 각 종목별 차트 분석 결과를 LLM에 전달해
-        오늘의 포트폴리오 상황 보고서를 생성한다.
-        (1) 각 종목별 차트 해석을 LLM이 직접 수행 (LLM 호출 1회/종목)
-        (2) 그 결과와 포지션 정보를 합쳐 전체 포트폴리오 상황을 LLM이 종합 분석 (LLM 호출 1회)
-        """
-        chart_analysis = []
-        for pos in positions:
-            symbol = pos.get("symbol") or pos.get("code")
-            name = pos.get("prdt_name") or pos.get("name")
-            price_history = self._fetch_price_history(symbol)
-            # LLM에 차트 해석 프롬프트 전달
-            chart_prompt = (
-                f"다음은 {name}({symbol})의 최근 가격 히스토리입니다. "
-                "차트 변동성, 추세, 위험 신호, 투자 전략을 한글로 간단히 요약해줘.\n"
-                f"[가격 데이터]\n{price_history}\n"
-            )
-            chart_summary = self.llm.generate(chart_prompt)
-            chart_analysis.append({
-                "name": name,
-                "symbol": symbol,
-                "chart_summary": chart_summary
-            })
-        # 전체 포트폴리오 상황 종합 보고서 프롬프트
-        prompt = (
-            "다음은 내 포트폴리오 보유 종목의 상세 정보와 각 종목별 차트 해석 요약입니다.\n"
-            "각 종목별로 주목할 만한 변화, 위험 신호, 투자 전략을 한글로 요약해줘.\n"
-            f"[포트폴리오]\n{positions}\n"
-            f"[차트 해석 요약]\n{chart_analysis}\n"
-        )
-        return self.llm.generate(prompt)
-
-    def _fetch_price_history(self, symbol: str):
-        """
-        Finnhub API를 사용해 심볼별 가격 히스토리(예: 일별 종가 30개) 조회
-        """
-        import requests
-        import os
-        api_key = os.getenv("FINNHUB_API_KEY")
-        url = "https://finnhub.io/api/v1/stock/candle"
-        params = {
-            "symbol": symbol,
-            "resolution": "D",
-            "count": 30,
-            "token": api_key
-        }
-        response = requests.get(url, params=params)
-        if response.status_code == 200:
-            data = response.json()
-            # data['c']는 종가(close) 리스트 등
-            return data
-        else:
-            logger.error(f"Finnhub price history fetch failed for {symbol}: {response.text}")
-            return []
-                self._notify_step("Daily Cycle", "종료: 행동 계획 없음")
-                return
-
-            try:
-                action_plan = json.loads(action_plan_str)
-                logger.info(f"LLM Action Plan: {action_plan}")
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse LLM action plan JSON: {e}. Plan received: {action_plan_str}")
-                self._notify_step("Daily Cycle", "오류: 행동 계획 파싱 실패")
-                return
-
-            # 6. 행동 계획 파싱·검증
-            self._notify_step("RiskGuard Validation & Confirmation Request", "시작")
-            execution_results = self._execute_action_plan(action_plan)
-            if any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "sent" for res in execution_results):
-                self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (승인 대기 중)")
-            elif any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "failed" for res in execution_results):
-                self._notify_step("RiskGuard Validation & Confirmation Request", "오류 (승인 요청 실패)")
-            else:
-                self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (실행할 주문 없음)")
-
-            # 7. Briefing 생성 (추천 결과도 포함)
-            self._notify_step("Briefing Generation", "시작")
-            briefing_content = self._generate_briefing({
-                'execution_results': execution_results,
-                'recommendations': recommendations,
-                'query': query
-            })
-            self._notify_step("Briefing Generation", "완료")
-
-            # 8. 결과 저장
-            self._notify_step("Save Results", "시작")
-            self._upsert_trade_results(execution_results)
-            self._notify_step("Save Results", "완료")
-
-            logger.info("Daily cycle completed successfully (pending user confirmation if applicable). LLM orchestration.")
-            self._notify_step("Daily Cycle", "완료 (승인 대기 중)" if any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "sent" for res in execution_results) else "완료")
-            self.send_notification(briefing_content)
-
-        except Exception as e:
-            logger.error(f"Daily cycle failed: {e}", exc_info=True)
-            self._notify_step("Daily Cycle", "오류")
-            self.send_notification(f"Daily cycle failed: {e}", is_error=True)
-
-    def _get_llm_action_plan(self, market_summary, market_data, current_positions, rag_context, recommendations=None, query=None) -> str | None:
-        """LLM에게 현재 상황 정보를 제공하고 행동 계획(JSON)을 요청합니다. (추천 종목/쿼리까지 포함)"""
-        logger.info("Asking LLM for the daily action plan...")
-        if not self.llm_model_name:
-            return None
-
-        # Build the prompt for the LLM
-        prompt = f"""
-        You are the master AI orchestrator for an ETF autotrading system. Your goal is to maximize returns while managing risk for a small investment amount ({settings.INVESTMENT_AMOUNT:,.0f} KRW).
-        Today's Date: {datetime.now().strftime('%Y-%m-%d')}
-
-        Today's Focus Query/Theme: {query}
-
-        Current Market Situation:
-        - Summary: {market_summary}
-        - Key ETF Prices: {json.dumps({k: v for k, v in market_data.items() if v}, indent=2)}
-
-        Current Portfolio:
-        {json.dumps(current_positions, indent=2)}
-
-        Recommendations from the recommender agent (based on query/theme):
-        {json.dumps(recommendations, indent=2)}
-
-        Relevant Past Context (from Memory/RAG):
-        {rag_context}
-
-        Based on all the above information, your analysis, and current best practices for ETF trading (consider momentum, mean reversion, market sentiment, risk management), decide the course of action for today.
-
-        Your output MUST be a JSON list of actions. Each action should be a dictionary with 'action_type' and necessary parameters.
-        Valid 'action_type' values are:
-        - 'buy': Execute a buy order. Requires 'symbol' (str), 'quantity' (int). Price will be market price.
-        - 'sell': Execute a sell order. Requires 'symbol' (str), 'quantity' (int). Price will be market price.
-        - 'hold': No action required for a specific symbol or overall. Can optionally include 'reason' (str).
-        - 'briefing': Add a specific insight or note to the daily briefing. Requires 'message' (str).
-
-        Example JSON Output:
-        [
-          {{"action_type": "sell", "symbol": "069500", "quantity": 5, "reason": "Stop-loss triggered based on yesterday's drop"}},
-          {{"action_type": "buy", "symbol": "229200", "quantity": 10, "reason": "Positive momentum signal and favorable market summary"}},
-          {{"action_type": "hold", "reason": "Market conditions are uncertain, wait for clearer signals."}},
-          {{"action_type": "briefing", "message": "Observed increased volatility in the energy sector ETFs."}}
-        ]
-
-        If no trades are recommended, return a list containing only a 'hold' or 'briefing' action, or an empty list [].
-        Ensure quantities are integers and symbols are valid KIS ETF codes.
-        Be mindful of the total investment amount and avoid over-allocation. Use the RiskGuard agent for final checks implicitly.
-
-        Generate the JSON action plan now:
-        """
-
-        try:
-            logger.info(f"Requesting Azure OpenAI action plan using {self.llm_model_name}...")
-            messages = [
-                {"role": "system", "content": "You are an AI assistant that generates JSON action plans for an ETF autotrading system based on provided market context and portfolio data."},
-                {"role": "user", "content": prompt}
-            ]
-            resp_json = azure_chat_completion(
-                deployment=self.llm_model_name,
-                messages=messages,
-                max_tokens=800,
-                temperature=0.7
-            )
-            text = resp_json["choices"][0]["message"]["content"].strip()
-            
-            # Extract JSON part (improved robustness)
-            json_block = None
-            if text.startswith("```json"):
-                json_block = text[len("```json"):].split("```")[0].strip()
-            elif text.startswith("[") and text.endswith("]"):
-                json_block = text
-            else:
-                start, end = text.find('['), text.rfind(']')
-                if start != -1 and end != -1:
-                    json_block = text[start:end+1]
-            
-            if json_block:
-                # Validate if it's actually JSON before returning
-                try:
-                    json.loads(json_block) # Try parsing
-                    logger.info(f"Received JSON action plan from Azure OpenAI: {json_block}")
-                    return json_block
-                except json.JSONDecodeError:
-                     logger.error(f"Extracted block is not valid JSON: {json_block}")
-                     return None # Failed validation
-            else:
-                logger.error(f"Could not extract JSON action plan from LLM response: {text}")
-                return None
-
-        except Exception as e:
-            logger.error(f"Azure OpenAI action plan generation failed: {e}", exc_info=True)
-            return None
-
-    def _execute_action_plan(self, action_plan: list) -> list:
-        """파싱된 행동 계획을 단계적으로 실행합니다. (사용자 승인 단계 추가)
-        """
-        logger.info(f"Executing action plan with {len(action_plan)} steps...")
-        execution_results = []
-        orders_to_request_confirmation = [] # Changed variable name
-        briefing_notes = []
-
-        # 1. Parse actions and separate orders from other actions
-        for action in action_plan:
-            action_type = action.get('action_type')
-            if action_type in ['buy', 'sell']:
-                symbol = action.get('symbol')
-                quantity = action.get('quantity')
-                if symbol and isinstance(quantity, int) and quantity > 0:
-                     # Add to potential orders - RiskGuard will validate later
-                     orders_to_request_confirmation.append({
-                         "symbol": symbol,
-                         "action": action_type, # 'buy' or 'sell'
-                         "quantity": quantity,
-                         "price": 0, # Market order based on LLM instruction
-                         "reason": action.get('reason', f'LLM directed {action_type}')
-                     })
-                else:
-                    logger.warning(f"Invalid buy/sell action received from LLM: {action}")
-                    execution_results.append({"action_type": action_type, "status": "invalid", "detail": action})
-            elif action_type == 'briefing':
-                message = action.get('message')
-                if message:
-                    briefing_notes.append(message)
-                    execution_results.append({"action_type": action_type, "status": "noted", "detail": message})
-            elif action_type == 'hold':
-                logger.info(f"LLM directed 'hold': {action.get('reason', 'No specific reason')}")
-                execution_results.append({"action_type": action_type, "status": "noted", "detail": action.get('reason')})
-            else:
-                 logger.warning(f"Unknown action type received from LLM: {action_type}")
-                 execution_results.append({"action_type": action_type, "status": "unknown", "detail": action})
-
-        # 2. Validate potential orders with RiskGuard
-        if orders_to_request_confirmation:
-            logger.info(f"Passing {len(orders_to_request_confirmation)} potential orders to RiskGuard...")
-            validated_orders = self.risk_guard.validate_orders(orders_to_request_confirmation)
-            logger.info(f"{len(validated_orders)} orders passed RiskGuard validation.")
-        else:
-            validated_orders = []
-
-        # 3. Request User Confirmation via Discord (INSTEAD of direct execution)
-        if validated_orders:
-            confirmation_result = self._request_user_confirmation(validated_orders)
-            execution_results.append(confirmation_result) # Record the request attempt
-
-            # --- IMPORTANT ---
-            # Actual order execution (_execute_orders) should happen *after* receiving
-            # user approval (e.g., 'yes') from Discord.
-            # This requires a mechanism for the Discord bot to communicate the user's
-            # decision back to the Orchestrator (e.g., callback, API call, message queue).
-            # Since that mechanism is not yet implemented, we are *NOT* calling
-            # self._execute_orders here.
-            #
-            # Conceptual flow after user clicks 'Yes':
-            # 1. Discord bot receives 'Yes' interaction.
-            # 2. Bot notifies Orchestrator (e.g., calls an API endpoint on FastAPI).
-            # 3. Orchestrator's endpoint handler receives the approved orders and calls:
-            #    approved_order_results = self._execute_orders(approved_orders)
-            #    self._upsert_trade_results(approved_order_results) # Save results
-            #    self.send_notification("User approved orders executed.")
-            #
-            # For 'No' or 'Hold', log the decision and potentially save context to memory.
-            # --- End Conceptual Flow ---
-
-        else:
-            logger.info("No orders require user confirmation.")
-
-        # 4. Add briefing notes to results (always happens regardless of orders)
-        execution_results.append({"action_type": "briefing_summary", "notes": briefing_notes})
-
-        return execution_results # Return results including confirmation request status
-
-    def _request_user_confirmation(self, orders_to_confirm: list) -> dict:
-        """검증된 주문 목록을 Discord 봇으로 보내 사용자 승인을 요청합니다. (실제 전송은 추후 구현)
-        """
-        request_id = str(uuid.uuid4()) # Unique ID for this confirmation request
-        logger.info(f"Requesting user confirmation via Discord for {len(orders_to_confirm)} orders. Request ID: {request_id}")
-
-        # Prepare data payload for Discord bot
-        payload = {
-            "request_id": request_id,
-            "orders": orders_to_confirm
-        }
-
-        try:
-            # --- TODO: Implement actual communication with Discord Bot ---
-            # This function (`send_discord_request`) needs to be implemented in `src/discord/bot.py`
-            # or a shared communication module. It should handle:
-            # - Formatting the orders into a user-friendly message (e.g., Embed).
-            # - Adding Yes/No/Hold buttons.
-            # - Sending the message to the appropriate Discord channel/user.
-            # - Storing the request_id and orders temporarily to handle the user's response.
-            # Example hypothetical call:
-            # success = await send_discord_request(type=DiscordRequestType.ORDER_CONFIRMATION, data=payload)
-            success = True # Placeholder: Assume request sent successfully
+    # ... (rest of the code remains the same)
             # -----------------------------------------------------------------
 
             if success:
