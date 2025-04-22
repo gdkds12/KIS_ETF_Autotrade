@@ -155,90 +155,350 @@ class Orchestrator:
         return self.info_crawler.get_market_summary()
 
     def run_daily_cycle(self):
-        """일일 자동매매 사이클 실행 (LLM 중심)
+        """일일 자동매매 사이클 실행 (AI 주도 쿼리 추천 → 정보 수집 → 추천 → 전략 → 실행)
         """
         self._notify_step("Daily Cycle", "시작")
         logger.info("Starting daily cycle with LLM orchestration...")
         
-        if not self.llm_model_name: # Check if model name is set
+        if not self.llm_model_name:
             logger.error("LLM model name not set. Cannot run daily cycle.")
-            self._notify_step("Daily Cycle", "오류: LLM 미설정") # Notify error
+            self._notify_step("Daily Cycle", "오류: LLM 미설정")
             return
 
         try:
-            # 1. 정보 수집 및 준비 (InfoCrawler)
-            self._notify_step("Info Crawler", "시작")
-            market_summary = self._run_info_crawler()
+            # 0. 오늘의 시장 쿼리: 고정 쿼리 + 동적 쿼리(종목별)
+            base_queries = [
+                "오늘 미국 주요 ETF(SPY, QQQ, VTI 등) 일간 시세 변동 요인",
+                "오늘 SPY·QQQ·VTI 실시간 가격 및 거래량 동향",
+                "오늘 미국 배당형 ETF(VYM, DVY 등) 배당 발표 소식",
+                "오늘 레버리지·인버스 ETF(TQQQ, SQQQ 등) 수익률 및 리스크",
+                "오늘 미국 채권 ETF(TLT, BND 등) 금리 영향 뉴스",
+                "오늘 기술 섹터 ETF(XLH, XLK 등) 주요 기업 실적 발표",
+                "오늘 섹터별 ETF(금융·에너지·헬스케어) 퍼포먼스 비교",
+                "오늘 미국 소형주 ETF(SPY, IWM 등) 시장 심리 및 변동성",
+                "오늘 해외 신흥시장 ETF(EEM, VWO 등) 뉴스 요약",
+                "오늘 ETF 순자산(AUM) 변동 및 신규 상장 소식",
+                "오늘 연준(Fed) 금리 회의 주요 결정 및 시장 반응",
+                "오늘 미국 의회(상·하원) 주요 입법 동향(예산·부채한도 등)",
+                "오늘 백악관·재무부 정책 발표 및 관료 발언",
+                "오늘 미 대선·정당내 경선 관련 최신 뉴스",
+                "오늘 미국‑중국 무역협상·관세 이슈 업데이트"
+            ]
+            current_positions = self._get_current_positions()
+            portfolio_names = [pos.get("prdt_name") or pos.get("name") for pos in current_positions if (pos.get("prdt_name") or pos.get("name"))]
+            portfolio_queries = [f"{name} 주요 뉴스" for name in portfolio_names]
+            all_queries = base_queries + portfolio_queries
+
+            # 1. InfoCrawler: 각 쿼리별 15초 간격으로 검색 및 요약
+            self._notify_step("Info Crawler", f"시작 (총 {len(all_queries)}개 쿼리)")
+            summaries = []
+            for idx, q in enumerate(all_queries):
+                logger.info(f"[InfoCrawler] ({idx+1}/{len(all_queries)}) 쿼리: {q}")
+                summary = self.info_crawler.get_market_summary(q)
+                summaries.append(summary)
+                if idx < len(all_queries) - 1:
+                    logger.info("[InfoCrawler] API rate limit: 15초 대기...")
+                    time.sleep(15)
             self._notify_step("Info Crawler", "완료")
-            
+            # summaries(요약본 리스트)로 오늘의 전략 통합 보고서 생성
+            self._notify_step("Strategy Report", "시작")
+            strategy_report = self._summarize_market_influences(summaries)
+            self._notify_step("Strategy Report", "완료")
+
             # 2. 시장 데이터 수집
             self._notify_step("Market Fetch", "시작")
             market_data = self._fetch_market_data()
             self._notify_step("Market Fetch", "완료")
-            
+
+            # 2.5. 추천 종목 산출 (Recommender 활용, 쿼리 기반)
+            self._notify_step("Recommender", "시작")
+            recommender = self.recommender if hasattr(self, 'recommender') else None
+            recommendations = []
+            if recommender:
+                try:
+                    rec_result = recommender.recommend(query=query)
+                    recommendations = rec_result.get('recommendations', []) if isinstance(rec_result, dict) else rec_result
+                    logger.info(f"Recommender output: {recommendations}")
+                except Exception as e:
+                    logger.error(f"Recommender failed: {e}")
+            else:
+                logger.warning("No recommender attached to Orchestrator; skipping recommendations.")
+            self._notify_step("Recommender", "완료")
+
             # 3. 현재 포지션 조회
             self._notify_step("Get Positions", "시작")
             current_positions = self._get_current_positions()
             self._notify_step("Get Positions", "완료")
-            
+
+            # 3.5. 포트폴리오 상황 보고서 생성
+            self._notify_step("Portfolio Report", "시작")
+            portfolio_report = self._summarize_portfolio_status(current_positions)
+            self._notify_step("Portfolio Report", "완료")
+
             # 4. 과거 메모리 검색
             self._notify_step("Memory RAG", "시작")
-            rag_context = self._retrieve_relevant_memory(market_summary)
+            rag_context = self._retrieve_relevant_memory(strategy_report)
             self._notify_step("Memory RAG", "완료")
-            
-            # 5. LLM 행동 계획
+
+            # 5. LLM 행동 계획 (추천 종목도 프롬프트에 포함)
             self._notify_step("LLM Action Plan", "시작")
-            action_plan_str = self._get_llm_action_plan(market_summary, market_data, current_positions, rag_context)
+            # --- LLM Action Plan 생성 단계 ---
+            # 전략 요약 프롬프트 보강: 투자 원칙, 위험 신호, 포트폴리오 분산 등 강조
+            strategy_prompt = (
+                "아래는 오늘의 시장 뉴스 요약, 각 보유 종목의 차트 해석, 추천 종목, 과거 메모리입니다. "
+                "이 모든 정보를 종합해 오늘의 투자 전략과 주요 근거, 주의할 점을 한글로 10문장 이내로 요약해줘. "
+                "반드시 투자 원칙(분산, 리스크 관리, 과도한 집중 회피 등)과 위험 신호도 함께 언급할 것. "
+                "전략은 구체적으로, 실전 투자자가 바로 참고할 수 있게 작성해줘."
+                f"\n[시장 뉴스 요약]\n{market_data}\n"
+                f"[포트폴리오 차트 해석]\n{portfolio_report}\n"
+                f"[추천 종목]\n{recommendations}\n"
+                f"[과거 메모리]\n{rag_context}\n"
+            )
+            action_plan_str = self.llm.generate(strategy_prompt)
             self._notify_step("LLM Action Plan", "완료")
 
             if not action_plan_str:
                 logger.warning("LLM did not provide an action plan. Ending cycle.")
-                self._notify_step("Daily Cycle", "종료: 행동 계획 없음") # Notify end reason
                 return
 
-            # --- (Action plan parsing remains the same) ---
+            # --- RiskGuard 감사 단계 ---
+            self._notify_step("Risk Audit", "리스크 감사 요청")
+            risk_guard = self.risk_guard if hasattr(self, 'risk_guard') else None
+            risk_audit_result = None
+            if risk_guard:
+                # 리스크 감사 프롬프트 보강: 구체적 위험 항목, 승인/거부 사유, 개선안 요청
+                risk_audit_prompt = (
+                    "아래는 오늘의 투자 전략 보고서, 포트폴리오 상황, 시장 데이터, 추천 종목입니다. "
+                    "이 전략의 리스크(과도한 집중, 변동성, 손실 위험, 정책 리스크 등)를 구체적으로 평가하고, "
+                    "위험 신호가 있다면 상세히 적고, 승인/거부를 반드시 명시해줘. "
+                    "거부 시에는 반드시 개선 방안도 제시할 것. "
+                    "결과는 JSON 형식으로: {\"approved\": true/false, \"summary\": \"...\", \"improvement\": \"...\"}"
+                    f"\n[전략 보고서]\n{action_plan_str}\n"
+                    f"[포트폴리오]\n{portfolio_report}\n"
+                    f"[시장 데이터]\n{market_data}\n"
+                    f"[추천 종목]\n{recommendations}\n"
+                )
+                risk_audit_result = risk_guard.audit_strategy(risk_audit_prompt)
+                self._notify_step("Risk Audit", "감사 완료")
+                if hasattr(risk_audit_result, 'approved') and not risk_audit_result.approved:
+                    logger.warning("RiskGuard did not approve the strategy. Ending cycle.")
+                    self._notify_step("Risk Audit", "거부/위험")
+                    return
+            else:
+                logger.warning("No RiskGuard attached; skipping risk audit.")
+
+            # --- Discord 결재 요청 단계 ---
+            self._notify_step("Discord Approval", "전략 보고서 결재 요청")
+            notifier = self.discord_notifier if hasattr(self, 'discord_notifier') else None
+            if notifier:
+                # Discord 결재 메시지 보강: 전략, 리스크 요약, 개선안, 승인/거부 안내
+                discord_message = (
+                    f"[전략 보고서]\n{action_plan_str}\n\n"
+                    f"[포트폴리오]\n{portfolio_report}\n\n"
+                    f"[리스크 감사 결과]\n{getattr(risk_audit_result, 'summary', risk_audit_result)}\n"
+                    f"[리스크 개선안]\n{getattr(risk_audit_result, 'improvement', '')}\n\n"
+                    "위 전략 실행을 승인하시겠습니까?\n[승인] [거부]"
+                )
+                approval = notifier.send_for_approval(
+                    report=discord_message,
+                    context={
+                        "portfolio_report": portfolio_report,
+                        "strategy_report": action_plan_str,
+                        "risk_audit": risk_audit_result
+                    }
+                )
+                if not approval:
+                    logger.warning("Action plan was rejected or not approved by user. Ending cycle.")
+                    self._notify_step("Discord Approval", "거부됨 또는 미승인")
+                    return
+                self._notify_step("Discord Approval", "승인 완료")
+            else:
+                logger.warning("No Discord notifier attached; skipping approval step.")
+
+            # --- LLM 실행 함수 생성 단계 ---
+            self._notify_step("LLM Trade Command", "실행 함수 생성")
+            # 트레이드 명령 프롬프트 보강: 주문 조건, 리스크 경고, 예외 상황 안내
+            trade_command_prompt = (
+                "아래는 오늘의 전략 보고서, 포트폴리오, 시장 데이터, 추천 종목, 과거 메모리입니다. "
+                "이 내용을 바탕으로 실제 매수/매도/관망 등 트레이딩을 위한 함수 호출 예시(심볼, 수량, 가격 등 포함)를 파이썬 코드로만 작성해줘. "
+                "예시: kis_api.buy(symbol, qty, price), kis_api.sell(symbol, qty, price) 등. "
+                "반드시 아래 조건을 지켜야 한다: 1) 투자 원칙(분산, 과도한 집중 회피, 손실 제한) 위반 금지, 2) 주문 수량/금액은 실제 투자 금액 내에서 합리적으로 산정, 3) 예외 상황(체결 불가, 잔고 부족 등)에는 아무 것도 하지 않는다. "
+                "실행이 필요 없는 종목은 아무 것도 하지 말고, 반드시 함수 호출만 나열해줘."
+                f"\n[전략 보고서]\n{action_plan_str}\n"
+                f"[포트폴리오]\n{portfolio_report}\n"
+                f"[시장 데이터]\n{market_data}\n"
+                f"[추천 종목]\n{recommendations}\n"
+                f"[과거 메모리]\n{rag_context}\n"
+            )
+            kis_trade_commands = self.llm.generate(trade_command_prompt)
+            self._notify_step("LLM Trade Command", "생성 완료")
+
+            # --- 실제 함수 실행 및 체결 처리 단계 ---
+            self._notify_step("Trade Execution", "주문 실행")
+            trade_results = self._execute_trade_commands(kis_trade_commands)
+            self._notify_step("Trade Execution", "완료")
+
+            # --- 하루 요약 및 DB 저장 단계 ---
+            self._notify_step("Daily Summary", "요약 생성")
+            # 하루 요약 프롬프트 보강: 전략의 성공/실패, 교훈, 내일 개선점 등 강조
+            summary_prompt = (
+                "아래는 오늘의 전략, 실제 체결 내역, 시장 데이터, 포트폴리오 정보입니다. "
+                "이 모든 내용을 바탕으로 오늘 하루의 투자 전략, 실행 결과, 주요 교훈, 내일 개선점을 한글로 구체적으로 요약해줘. "
+                "전략의 성공/실패 원인, 시장의 주요 변수, 내일을 위한 조언도 포함할 것."
+                f"\n[전략 보고서]\n{action_plan_str}\n"
+                f"[체결 내역]\n{trade_results}\n"
+                f"[시장 데이터]\n{market_data}\n"
+                f"[포트폴리오]\n{portfolio_report}\n"
+            )
+            daily_summary = self.llm.generate(summary_prompt)
+            self._notify_step("Daily Summary", "DB 저장")
+            if hasattr(self, 'memory_db'):
+                self.memory_db.save_daily_summary(
+                    date=self._get_today(),
+                    summary=daily_summary,
+                    trades=trade_results,
+                    strategy=action_plan_str
+                )
+            self._notify_step("Daily Summary", "완료")
+
+    def _execute_trade_commands(self, kis_trade_commands: str):
+        """
+        kis_trade_commands(파이썬 코드 문자열)을 안전하게 파싱/실행하여 실제 KIS API로 주문을 실행하고, 결과를 리스트로 반환
+        """
+        import ast
+        results = []
+        local_vars = {"kis_api": self.broker}
+        try:
+            tree = ast.parse(kis_trade_commands)
+            for node in tree.body:
+                if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call):
+                    code = compile(ast.Module([node], []), '<string>', 'exec')
+                    exec(code, {}, local_vars)
+                    results.append(ast.unparse(node))
+        except Exception as e:
+            logger.error(f"Trade command execution failed: {e}")
+            results.append(f"Execution error: {e}")
+        return results
+
+    def _get_today(self):
+        from datetime import datetime
+        return datetime.now().strftime("%Y-%m-%d")
+
+# --- 중략 ---
+    def _summarize_market_influences(self, summaries: list[str]) -> str:
+        """
+        InfoCrawler에서 수집한 뉴스/이슈 요약 리스트를 종합적으로 분석하여
+        오늘 주가에 영향을 줄 수 있는 핵심 요인과 전략을 한글로 요약한다.
+        """
+        prompt = (
+            "다음은 오늘 시장 및 내 포트폴리오 관련 뉴스/이슈 요약입니다.\n"
+            "각 요약을 종합해 오늘 주가에 영향을 줄 수 있는 핵심 요인과 시장 전략을 한글로 정리해줘.\n"
+            + "\n".join([f"{i+1}. {s}" for i, s in enumerate(summaries)])
+        )
+        # LLM(Azure OpenAI 등) 호출 예시
+        return self.llm.generate(prompt)
+
+    def _summarize_portfolio_status(self, positions: list[dict]) -> str:
+        """
+        KIS API로 수집한 내 포트폴리오 정보와 각 종목별 차트 분석 결과를 LLM에 전달해
+        오늘의 포트폴리오 상황 보고서를 생성한다.
+        (1) 각 종목별 차트 해석을 LLM이 직접 수행 (LLM 호출 1회/종목)
+        (2) 그 결과와 포지션 정보를 합쳐 전체 포트폴리오 상황을 LLM이 종합 분석 (LLM 호출 1회)
+        """
+        chart_analysis = []
+        for pos in positions:
+            symbol = pos.get("symbol") or pos.get("code")
+            name = pos.get("prdt_name") or pos.get("name")
+            price_history = self._fetch_price_history(symbol)
+            # LLM에 차트 해석 프롬프트 전달
+            chart_prompt = (
+                f"다음은 {name}({symbol})의 최근 가격 히스토리입니다. "
+                "차트 변동성, 추세, 위험 신호, 투자 전략을 한글로 간단히 요약해줘.\n"
+                f"[가격 데이터]\n{price_history}\n"
+            )
+            chart_summary = self.llm.generate(chart_prompt)
+            chart_analysis.append({
+                "name": name,
+                "symbol": symbol,
+                "chart_summary": chart_summary
+            })
+        # 전체 포트폴리오 상황 종합 보고서 프롬프트
+        prompt = (
+            "다음은 내 포트폴리오 보유 종목의 상세 정보와 각 종목별 차트 해석 요약입니다.\n"
+            "각 종목별로 주목할 만한 변화, 위험 신호, 투자 전략을 한글로 요약해줘.\n"
+            f"[포트폴리오]\n{positions}\n"
+            f"[차트 해석 요약]\n{chart_analysis}\n"
+        )
+        return self.llm.generate(prompt)
+
+    def _fetch_price_history(self, symbol: str):
+        """
+        Finnhub API를 사용해 심볼별 가격 히스토리(예: 일별 종가 30개) 조회
+        """
+        import requests
+        import os
+        api_key = os.getenv("FINNHUB_API_KEY")
+        url = "https://finnhub.io/api/v1/stock/candle"
+        params = {
+            "symbol": symbol,
+            "resolution": "D",
+            "count": 30,
+            "token": api_key
+        }
+        response = requests.get(url, params=params)
+        if response.status_code == 200:
+            data = response.json()
+            # data['c']는 종가(close) 리스트 등
+            return data
+        else:
+            logger.error(f"Finnhub price history fetch failed for {symbol}: {response.text}")
+            return []
+                self._notify_step("Daily Cycle", "종료: 행동 계획 없음")
+                return
+
             try:
                 action_plan = json.loads(action_plan_str)
                 logger.info(f"LLM Action Plan: {action_plan}")
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse LLM action plan JSON: {e}. Plan received: {action_plan_str}")
-                self._notify_step("Daily Cycle", "오류: 행동 계획 파싱 실패") # Notify error
+                self._notify_step("Daily Cycle", "오류: 행동 계획 파싱 실패")
                 return
-            # --- End Parsing --- 
-            
-            # 6. 행동 계획 파싱·검증 (Note: _execute_action_plan now mainly handles validation and requests confirmation)
+
+            # 6. 행동 계획 파싱·검증
             self._notify_step("RiskGuard Validation & Confirmation Request", "시작")
             execution_results = self._execute_action_plan(action_plan)
-            # Check if confirmation was sent or if there were errors/no orders
             if any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "sent" for res in execution_results):
                 self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (승인 대기 중)")
             elif any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "failed" for res in execution_results):
-                 self._notify_step("RiskGuard Validation & Confirmation Request", "오류 (승인 요청 실패)")
+                self._notify_step("RiskGuard Validation & Confirmation Request", "오류 (승인 요청 실패)")
             else:
-                 self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (실행할 주문 없음)")
-                 
-            # 7. Briefing 생성
+                self._notify_step("RiskGuard Validation & Confirmation Request", "완료 (실행할 주문 없음)")
+
+            # 7. Briefing 생성 (추천 결과도 포함)
             self._notify_step("Briefing Generation", "시작")
-            briefing_content = self._generate_briefing(execution_results) # Pass validation results
+            briefing_content = self._generate_briefing({
+                'execution_results': execution_results,
+                'recommendations': recommendations,
+                'query': query
+            })
             self._notify_step("Briefing Generation", "완료")
-            
-            # 8. 결과 저장 (Validation/Confirmation results)
+
+            # 8. 결과 저장
             self._notify_step("Save Results", "시작")
-            self._upsert_trade_results(execution_results) # Save results to memory/DB
+            self._upsert_trade_results(execution_results)
             self._notify_step("Save Results", "완료")
 
             logger.info("Daily cycle completed successfully (pending user confirmation if applicable). LLM orchestration.")
             self._notify_step("Daily Cycle", "완료 (승인 대기 중)" if any(res.get("action_type") == "user_confirmation_request" and res.get("status") == "sent" for res in execution_results) else "완료")
-            self.send_notification(briefing_content) # Send briefing regardless of orders
+            self.send_notification(briefing_content)
 
         except Exception as e:
             logger.error(f"Daily cycle failed: {e}", exc_info=True)
-            self._notify_step("Daily Cycle", "오류") # General error
+            self._notify_step("Daily Cycle", "오류")
             self.send_notification(f"Daily cycle failed: {e}", is_error=True)
 
-    def _get_llm_action_plan(self, market_summary, market_data, current_positions, rag_context) -> str | None:
-        """LLM에게 현재 상황 정보를 제공하고 행동 계획(JSON)을 요청합니다.
-        """
+    def _get_llm_action_plan(self, market_summary, market_data, current_positions, rag_context, recommendations=None, query=None) -> str | None:
+        """LLM에게 현재 상황 정보를 제공하고 행동 계획(JSON)을 요청합니다. (추천 종목/쿼리까지 포함)"""
         logger.info("Asking LLM for the daily action plan...")
         if not self.llm_model_name:
             return None
@@ -248,12 +508,17 @@ class Orchestrator:
         You are the master AI orchestrator for an ETF autotrading system. Your goal is to maximize returns while managing risk for a small investment amount ({settings.INVESTMENT_AMOUNT:,.0f} KRW).
         Today's Date: {datetime.now().strftime('%Y-%m-%d')}
 
+        Today's Focus Query/Theme: {query}
+
         Current Market Situation:
         - Summary: {market_summary}
         - Key ETF Prices: {json.dumps({k: v for k, v in market_data.items() if v}, indent=2)}
 
         Current Portfolio:
         {json.dumps(current_positions, indent=2)}
+
+        Recommendations from the recommender agent (based on query/theme):
+        {json.dumps(recommendations, indent=2)}
 
         Relevant Past Context (from Memory/RAG):
         {rag_context}
@@ -285,7 +550,7 @@ class Orchestrator:
         try:
             logger.info(f"Requesting Azure OpenAI action plan using {self.llm_model_name}...")
             messages = [
-                {"role": "system", "content": "You are an AI assistant that generates JSON action plans for an ETF autotrading system based on provided market context and portfolio data."}, # System prompt
+                {"role": "system", "content": "You are an AI assistant that generates JSON action plans for an ETF autotrading system based on provided market context and portfolio data."},
                 {"role": "user", "content": prompt}
             ]
             resp_json = azure_chat_completion(
@@ -445,175 +710,6 @@ class Orchestrator:
              return {
                  "action_type": "user_confirmation_request",
                  "status": "failed",
-                 "detail": f"Error sending confirmation request: {e}",
-                 "request_id": request_id,
-                 "orders_requested": orders_to_confirm
-             }
-
-    def _run_info_crawler(self):
-        logger.info("Running Info Crawler...")
-        try:
-            # Let InfoCrawler handle its own logic, potentially using LLM for summarization
-            summary = self.info_crawler.get_market_summary()
-            if summary:
-                 # Optionally save summary to memory
-                 self.memory_rag.save_memory(summary, metadata={"type": "market_summary", "source": "infocrawler"})
-                 return summary
-            else:
-                 return "No market summary available."
-        except Exception as e:
-             logger.error(f"InfoCrawler failed: {e}", exc_info=True)
-             return "Error fetching market summary."
-
-    def _retrieve_relevant_memory(self, current_summary: str, limit: int = 5) -> str:
-        """현재 상황과 관련된 과거 메모리를 RAG를 통해 검색합니다.
-        """
-        logger.info("Retrieving relevant memory context using RAG...")
-        try:
-            search_results = self.memory_rag.search_similar(current_summary, limit=limit)
-            context = ""
-            if search_results:
-                context += "Found relevant past context:\n"
-                for i, hit in enumerate(search_results):
-                    # Ensure payload and text exist
-                    payload_text = hit.payload.get('text', 'N/A') if hit.payload else 'N/A'
-                    context += f"{i+1}. (Score: {hit.score:.3f}) {payload_text[:200]}...\n" # Limit length
-            else:
-                 context = "No relevant past context found."
-            return context.strip()
-        except Exception as e:
-             logger.error(f"Memory RAG search failed: {e}", exc_info=True)
-             return "Error retrieving context from memory."
-
-    @kis_retry_decorator
-    def _get_current_positions(self) -> list:
-        """현재 보유 포지션 정보를 가져옵니다.
-        """
-        logger.info("Fetching current positions...")
-        try:
-            positions = self.broker.get_positions()
-            logger.info(f"Fetched {len(positions)} current positions.")
-            return positions
-        except KisBrokerError as e:
-            logger.error(f"Failed to get current positions after retries: {e}")
-            # Depending on policy, maybe return empty list or raise error
-            return []
-        except Exception as e:
-             logger.error(f"Unexpected error getting positions: {e}", exc_info=True)
-             return []
-
-    def _summarize_and_upsert_memory(self):
-        # This function might be less relevant now if LLM handles context directly
-        # Or could be used to summarize *this* cycle's logs after completion
-        logger.info("Skipping explicit memory summarization step in LLM-driven cycle.")
-        pass
-
-    @kis_retry_decorator
-    def _fetch_market_data(self):
-        logger.info("Fetching market data...")
-        # TODO: Implement market data fetching (e.g., using broker)
-        # return self.broker.get_quotes([...]) # 필요한 종목 리스트
-        market_data = {}
-        # TODO: Get target symbols from strategy or config
-        symbols = settings.TARGET_SYMBOLS # <- 수정된 부분
-        for symbol in symbols:
-            try:
-                # This call within the loop might need individual retries or batching
-                quote = self.broker.get_quote(symbol)
-                market_data[symbol] = {
-                    'stck_prpr': quote.get('stck_prpr'), # 현재가
-                    # Add other relevant fields from quote if needed by strategy
-                    'prdy_vrss': quote.get('prdy_vrss'), # 전일대비
-                    'prdy_ctrt': quote.get('prdy_ctrt'), # 전일대비율
-                }
-                logger.debug(f"Fetched quote for {symbol}: {market_data[symbol]}")
-                time.sleep(0.1) # Basic rate limiting between KIS calls
-            except KisBrokerError as e:
-                logger.error(f"Failed to fetch quote for {symbol} after retries: {e}")
-                # Decide whether to continue or fail the whole step
-                # raise # Re-raise to fail the step if one quote fails
-                market_data[symbol] = None # Or mark as failed
-            except Exception as e:
-                 logger.error(f"Unexpected error fetching quote for {symbol}: {e}", exc_info=True)
-                 market_data[symbol] = None
-        logger.info(f"Market data fetched for {len(market_data)} symbols.")
-        return market_data
-
-    def _run_strategy(self, market_data, market_summary):
-        logger.info("Running Strategy...")
-        # TODO: Implement strategy call
-        # return self.strategy.generate_signals(market_data, market_summary)
-        # Placeholder: Buy 1 share of KODEX 200 if stable
-        if "stable" in market_summary:
-            return [{"symbol": "069500", "action": "buy", "quantity": 1, "price": 35000}]
-        return []
-
-    def _run_risk_guard(self, trading_signals):
-        logger.info("Running Risk Guard...")
-        # TODO: Implement risk_guard call
-        # return self.risk_guard.validate_orders(trading_signals)
-        return trading_signals # Placeholder: No filtering for now
-
-    @kis_retry_decorator
-    def _execute_orders(self, validated_orders):
-        # This method remains largely the same, but is now called CONDITIONALLY
-        # after user approval is received.
-        logger.info(f"Executing {len(validated_orders)} APPROVED orders...") # Added 'APPROVED'
-        results = []
-        for order in validated_orders:
-            order_result = None
-            # Use reason from the order if available, else generate default
-            action_desc = order.get('reason', f"{order['action']} order for {order['symbol']}")
-            try:
-                # Determine KIS order parameters
-                symbol = order['symbol']
-                quantity = order['quantity']
-                price = order['price'] # Should be 0 for market order from LLM plan
-                order_type = "01" if price == 0 else "00" # 01: 시장가, 00: 지정가
-                buy_sell_code = "02" if order['action'] == 'buy' else "01" # 02: 매수, 01: 매도
-
-                # Execute the order using the broker
-                kis_response_output = self.broker.order_cash(
-                    symbol=symbol,
-                    quantity=quantity,
-                    price=price,
-                    order_type=order_type,
-                    buy_sell_code=buy_sell_code
-                )
-                # Assume success if no exception
-                order_result = {"action_type": order['action'], "status": "success", "detail": f"{action_desc} submitted successfully.", "kis_response": kis_response_output, "order": order}
-                logger.info(f"Order executed: {order_result['detail']} - Response: {kis_response_output}")
-                # Consider adding configurable sleep from settings
-                time.sleep(settings.ORDER_INTERVAL_SECONDS) # Use setting
-
-            except KisBrokerError as e:
-                logger.error(f"Failed to execute {action_desc}: {e}")
-                # self.risk_guard.handle_api_error(e, action_desc) # Maybe RiskGuard handles this?
-                order_result = {"action_type": order['action'], "status": "failed", "detail": f"{action_desc} failed: {e}", "kis_response": e.response_data, "order": order}
-            except Exception as e:
-                logger.error(f"Unexpected error executing {action_desc}: {e}", exc_info=True)
-                order_result = {"action_type": order['action'], "status": "error", "detail": f"Unexpected error during {action_desc}: {e}", "order": order}
-
-            if order_result:
-                results.append(order_result)
-
-        logger.info(f"Finished executing orders. Results: {len(results)} recorded.")
-        return results
-
-    def _generate_briefing(self, execution_results):
-        logger.info("Generating Briefing based on execution results...")
-        try:
-            # Pass the structured results to the briefing agent
-            return self.briefing_agent.create_report_from_actions(execution_results)
-        except Exception as e:
-             logger.error(f"Briefing generation failed: {e}", exc_info=True)
-             return f"Error generating briefing: {e}"
-
-    def _upsert_trade_results(self, execution_results):
-        logger.info("Upserting execution results to memory...")
-        try:
-            # Let MemoryRAG handle saving the structured results
-            self.memory_rag.save_execution_results(execution_results)
         except Exception as e:
              logger.error(f"Failed to upsert execution results: {e}", exc_info=True)
 
