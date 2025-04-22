@@ -72,7 +72,7 @@ async def lifespan(app: FastAPI):
 
         # --- Initialize Finnhub Client ---
         if settings.FINNHUB_API_KEY:
-            finnhub_client = FinnhubClient(api_key=settings.FINNHUB_API_KEY)
+            finnhub_client = FinnhubClient(token=settings.FINNHUB_API_KEY) # 수정: api_key -> token
             app_state['finnhub_client'] = finnhub_client
             logger.info("Finnhub client initialized.")
         else:
@@ -135,8 +135,10 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Error during application startup: {e}", exc_info=True)
         # Ensure partial resources are cleaned up if startup fails mid-way
-        if 'broker' in app_state:
-            await app_state['broker'].close_session()
+        if 'broker' in app_state and app_state['broker']:
+            # KisBroker.close는 동기 메소드일 수 있으므로 to_thread 사용 고려
+            await asyncio.to_thread(app_state['broker'].close) # 수정: close_session -> close, asyncio.to_thread 사용
+            logger.info("Broker session closed (on startup error).")
         if 'qdrant_client' in app_state and app_state['qdrant_client']:
              # Qdrant client might not have an explicit close in the sdk
              logger.info("Qdrant client resources released (if applicable).")
@@ -154,7 +156,8 @@ async def lifespan(app: FastAPI):
     #      logger.info("Background tasks cancelled.")
 
     if 'broker' in app_state and app_state['broker']:
-        await asyncio.to_thread(app_state['broker'].close)
+        # KisBroker.close는 동기 메소드일 수 있으므로 to_thread 사용 고려
+        await asyncio.to_thread(app_state['broker'].close) # 수정: close_session -> close, asyncio.to_thread 사용
         logger.info("Broker session closed.")
     if 'qdrant_client' in app_state and app_state['qdrant_client']:
          try:
