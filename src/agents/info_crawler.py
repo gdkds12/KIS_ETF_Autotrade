@@ -119,7 +119,10 @@ class InfoCrawler:
                 merged_news.append({
                     'url': url,
                     'headline': item.get('headline', '') or item.get('title', ''),
-                    'summary': item.get('summary', '') or item.get('snippet', '')
+                    'summary': item.get('summary', '') or item.get('snippet', ''),
+                    'source': 'google',
+                    'publisher': item.get('displayLink', ''),
+                    'date': item.get('datePublished', '') or item.get('pubDate', '')
                 })
         # Finnhub 뉴스: url, headline, summary (본문은 fetch_article_text로 크롤링)
         for item in finnhub_news_list:
@@ -129,7 +132,10 @@ class InfoCrawler:
                 merged_news.append({
                     'url': url,
                     'headline': item.get('headline', ''),
-                    'summary': item.get('summary', '')
+                    'summary': item.get('summary', ''),
+                    'source': 'finnhub',
+                    'publisher': item.get('source', 'Finnhub'),
+                    'date': item.get('datetime', '') # finnhub는 timestamp(int)일 수 있음
                 })
 
         logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
@@ -137,17 +143,44 @@ class InfoCrawler:
             logger.warning("No news collected from Google or Finnhub.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
+        # Finnhub 기사 우선, 그 뒤 google 기사로 분리
+        finnhub_news = [n for n in merged_news if n.get('source') == 'finnhub']
+        google_news = [n for n in merged_news if n.get('source') == 'google']
+        # 날짜 기준 최신순 정렬 (가능하면)
+        def parse_date(d):
+            import datetime
+            if isinstance(d, int):
+                # finnhub unix timestamp (초)
+                try:
+                    return datetime.datetime.fromtimestamp(d)
+                except Exception:
+                    return datetime.datetime.min
+            if isinstance(d, str) and d:
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        return datetime.datetime.strptime(d[:len(fmt)], fmt)
+                    except Exception:
+                        continue
+            return datetime.datetime.min
+        finnhub_news.sort(key=lambda n: parse_date(n.get('date')), reverse=True)
+        google_news.sort(key=lambda n: parse_date(n.get('date')), reverse=True)
+        merged_news_sorted = finnhub_news + google_news
+
         # 기사 본문 크롤링 및 요약 준비
         articles_for_prompt = []
-        urls = [item.get("url") for item in merged_news]
+        urls = [item.get("url") for item in merged_news_sorted]
         with ThreadPoolExecutor(max_workers=10) as pool:
             future_to_url = {pool.submit(self.fetch_article_text, url): url for url in urls if url}
             for future in as_completed(future_to_url):
                 url = future_to_url[future]
                 try:
                     article_text = future.result()
-                    headline = next((item.get("headline", "") for item in merged_news if item.get("url") == url), "")
-                    summary = next((item.get("summary", "") for item in merged_news if item.get("url") == url), "")
+                    item = next((i for i in merged_news_sorted if i.get("url") == url), {})
+                    headline = item.get("headline", "")
+                    summary = item.get("summary", "")
+                    publisher = item.get("publisher", "")
+                    date = item.get("date", "")
+                    source = item.get("source", "")
                     # 기사 본문이 충분히 길면 본문, 아니면 summary/headline 사용
                     if article_text and len(article_text) > 200:
                         content = article_text
@@ -156,7 +189,9 @@ class InfoCrawler:
                     else:
                         content = headline
                     if headline or content:
-                        articles_for_prompt.append(f"제목: {headline.strip()}\n내용: {content.strip()}\nURL: {url if url else ''}\n---")
+                        articles_for_prompt.append(
+                            f"제목: {headline.strip()}\n내용: {content.strip()}\n출처: {publisher} ({source})\nURL: {url if url else ''}\n날짜: {date}\n---"
+                        )
                 except Exception as exc:
                     logger.error(f"Subquery '{url}' generated an exception: {exc}", exc_info=True)
         logger.info(f"[get_market_summary] articles_for_prompt length: {len(articles_for_prompt)}; first item: {articles_for_prompt[0] if articles_for_prompt else None}")
@@ -171,15 +206,14 @@ class InfoCrawler:
         now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
         system_prompt_1 = (
-            f"You are a professional financial news summarizer. The current local time is {now_kst} (KST). "
-            f"You will be given multiple news articles, each clearly delimited and labeled. "
-            f"Summarize the following articles in Korean, providing a comprehensive and detailed summary. "
-            f"Sort the articles in order of recency (most recent first) based on their timestamps or context. "
-            f"Prioritize and highlight the most important and impactful news first. "
-            f"Include all important facts and trends, and if possible, mention key points for each article. "
-            f"For each article, clearly indicate the source (such as the news outlet or website) and the article's publication date in the summary. "
-            f"Remove redundancy, but do not omit meaningful details. "
-            f"Structure the summary so that even readers who have not seen the original articles can understand the overall market situation."
+            f"당신은 전문 금융 뉴스 요약 AI입니다. 현재 시각은 {now_kst} (KST)입니다. "
+            f"아래에 여러 개의 뉴스 기사가 구분되어 제공됩니다. 각 기사별로 제목, 내용, 출처(언론사/플랫폼/URL 등), 날짜 정보를 참고하세요. "
+            f"각 기사의 핵심 내용을 한글로 종합적이고 자세하게 요약해 주세요. "
+            f"기사들은 신뢰도가 높은 순서(예: 공식 금융 플랫폼 기사 우선) 및 최신순(가장 최근 기사부터)으로 정리되어 있습니다. "
+            f"특히 중요한 기사와 시장에 영향이 큰 이슈는 먼저 강조해 주세요. "
+            f"각 기사별로 출처(언론사, 플랫폼 또는 URL 등), 날짜를 반드시 명확히 표기해 주세요. "
+            f"중복되는 내용은 통합하되, 중요한 세부사항은 누락하지 마세요. "
+            f"뉴스 원문을 읽지 않은 사람도 전체 시장 상황을 쉽게 파악할 수 있도록 구조적으로 요약해 주세요. "
         )
         user_content_1 = '\n'.join(articles_for_prompt)
         messages_1 = [
