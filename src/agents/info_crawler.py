@@ -145,43 +145,26 @@ class InfoCrawler:
                 })
 
         logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
+        # 기사 수집 완료 알림
+        if self.status_notifier:
+            self.status_notifier(f"{len(merged_news)}개 기사 수집완료")
         if not merged_news:
             logger.warning("No news collected from Google or Finnhub.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
-        # Finnhub 기사 우선, 그 뒤 google 기사로 분리
-        finnhub_news = [n for n in merged_news if n.get('source') == 'finnhub']
-        google_news = [n for n in merged_news if n.get('source') == 'google']
-        # 날짜 기준 최신순 정렬 (가능하면)
-        def parse_date(d):
-            import datetime
-            if isinstance(d, int):
-                # finnhub unix timestamp (초)
-                try:
-                    return datetime.datetime.fromtimestamp(d)
-                except Exception:
-                    return datetime.datetime.min
-            if isinstance(d, str) and d:
-                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
-                    try:
-                        return datetime.datetime.strptime(d[:len(fmt)], fmt)
-                    except Exception:
-                        continue
-            return datetime.datetime.min
-        finnhub_news.sort(key=lambda n: parse_date(n.get('date')), reverse=True)
-        google_news.sort(key=lambda n: parse_date(n.get('date')), reverse=True)
-        merged_news_sorted = finnhub_news + google_news
-
+        # 기사 내용 크롤링 시작
+        if self.status_notifier:
+            self.status_notifier("기사 내용 수집중")
         # 기사 본문 크롤링 및 요약 준비
         articles_for_prompt = []
-        urls = [item.get("url") for item in merged_news_sorted]
+        urls = [item.get("url") for item in merged_news]
         with ThreadPoolExecutor(max_workers=10) as pool:
             future_to_url = {pool.submit(self.fetch_article_text, url): url for url in urls if url}
             for future in as_completed(future_to_url):
                 url = future_to_url[future]
                 try:
                     article_text = future.result()
-                    item = next((i for i in merged_news_sorted if i.get("url") == url), {})
+                    item = next((i for i in merged_news if i.get("url") == url), {})
                     headline = item.get("headline", "")
                     summary = item.get("summary", "")
                     publisher = item.get("publisher", "")
@@ -201,13 +184,18 @@ class InfoCrawler:
                 except Exception as exc:
                     logger.error(f"Subquery '{url}' generated an exception: {exc}", exc_info=True)
         logger.info(f"[get_market_summary] articles_for_prompt length: {len(articles_for_prompt)}; first item: {articles_for_prompt[0] if articles_for_prompt else None}")
+        # 본문 수집 완료 알림
+        if self.status_notifier:
+            self.status_notifier(f"{len(articles_for_prompt)}개 수집완료")
         if not articles_for_prompt:
             logger.warning("Could not extract usable news article contents.")
             return "(뉴스 내용을 처리할 수 없습니다.)"
 
         # 1차 요약: 기사 전체를 한 번에 LLM에 보내 중복 없이 핵심만 요약
         from src.utils.azure_openai import azure_chat_completion
-        
+        # 1차 요약 시작 알림
+        if self.status_notifier:
+            self.status_notifier("1차요약중")
         # 실시간 KST 시간 가져오기
         now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
@@ -229,9 +217,9 @@ class InfoCrawler:
         resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO, messages=messages_1, max_tokens=8000, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
-        # 단계 완료
+        # 요약 완료 알림
         if self.status_notifier:
-            self.status_notifier("completed")
+            self.status_notifier("요약완료")
         return first_summary
 
 
