@@ -164,26 +164,28 @@ class TradeCog(commands.Cog):
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
-        # 1. 먼저 진행 메시지(일반 텍스트) 전송
+        # 1. 진행상황 메시지(텍스트)만 전송, 도구상태 embed 사용 금지
         sent_msg = await interaction.followup.send("기사 수집중...", wait=True)
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
             await interaction.followup.send("Orchestrator가 준비되지 않았습니다.")
             return
 
-        # 2. status_notifier에서 해당 메시지를 단계별로 수정
+        # 2. status_notifier를 market_summary에서만 동적으로 연결 (도구상태 embed와 분리)
         async def status_notifier(msg):
-            if msg == "기사 내용 수집중":
+            # InfoCrawler에서 정확히 아래 4단계 메시지만 호출
+            if msg == "기사 내용 수집중" or msg == "기사 수집중":
                 await sent_msg.edit(content="기사 수집중...")
-            elif msg.endswith("기사 수집완료"):
+            elif msg.endswith("기사 수집완료") or msg == "기사 수집 완료":
                 await sent_msg.edit(content="기사 수집 완료!")
-            elif msg == "1차요약중":
+            elif msg == "1차요약중" or msg == "요약중":
                 await sent_msg.edit(content="요약중...")
             elif msg == "요약완료":
                 await sent_msg.edit(content="요약완료!")
 
         def notifier_sync(msg):
             asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
+        # status_notifier를 임시 연결
         orchestrator.info_crawler.status_notifier = notifier_sync
 
         import asyncio
@@ -195,6 +197,8 @@ class TradeCog(commands.Cog):
         )
         # 3. 마지막으로 요약 결과로 메시지 업데이트
         await sent_msg.edit(content=summary)
+        # 4. status_notifier 해제(다른 명령 영향 방지)
+        orchestrator.info_crawler.status_notifier = None
 
 
     @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
