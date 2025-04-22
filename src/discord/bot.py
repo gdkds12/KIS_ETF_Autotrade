@@ -293,7 +293,7 @@ class TradeCog(commands.Cog):
                 final_summary = result if isinstance(result, str) else str(result)
                 await status_msg.edit(content=final_summary)
             # content는 반드시 문자열이어야 함
-            result_str = result if isinstance(result, str) else _json.dumps(result, ensure_ascii=False, default=str)
+            result_str = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False, default=str)
 
             # assistant 호출 메시지 + tool/function 결과 메시지를 history에 추가
             if tool_calls:
