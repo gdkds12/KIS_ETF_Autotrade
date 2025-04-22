@@ -76,7 +76,7 @@ class InfoCrawler:
                     self.status_notifier(msg)
                 last_status_time = now
         # 단계 시작
-        throttled_notify("기사 수집중")
+        throttled_notify("기사 수집 중")
         logger.info(f"[get_market_summary] called with user_query='{user_query}' max_articles={max_articles}")
         logger.info(f"Getting market summary for query: '{user_query}'")
         
@@ -94,8 +94,8 @@ class InfoCrawler:
                 "key": settings.GOOGLE_API_KEY,
                 "cx": settings.GOOGLE_CX,
                 "q": user_query,
-                "num": 10,
-                "dateRestrict": "d7"  # 최근 7일 이내 결과
+                "num": max_articles,     # max_articles 개만 요청
+                "dateRestrict": "d7"      # 최근 7일 이내 결과
             }
             logger.debug(f"[get_market_summary] Google API request params: {params}")
             resp = requests.get(url, params=params, timeout=12)
@@ -110,15 +110,13 @@ class InfoCrawler:
                 logger.warning(f"[get_market_summary] Google search error: HTTP {resp.status_code}, content: {resp.text}")
         except Exception as e:
             logger.error(f"[get_market_summary] Google search exception: {e}", exc_info=True)
-        # Google 뉴스 결과: 항상 10개 가져오기
-        google_news_list = google_results if isinstance(google_results, list) else []
-        google_news_list = google_news_list[:10]
+        # Google 뉴스 API 결과 (최대 max_articles개)
+        google_news_list = google_results[:max_articles] if isinstance(google_results, list) else []
         logger.info(f"[get_market_summary] Collected {len(google_news_list)} Google web results.")
 
-        # Finnhub 일반 뉴스 결과: 10개만 사용
+        # Finnhub 일반 뉴스 결과: max_articles개만 사용
         try:
-            finnhub_news_list = self.finnhub.get_general_news(category='general')
-            finnhub_news_list = finnhub_news_list[:10]
+            finnhub_news_list = self.finnhub.get_general_news(category='general')[:max_articles]
             logger.info(f"[get_market_summary] Collected {len(finnhub_news_list)} Finnhub news results.")
         except Exception as e:
             logger.error(f"[get_market_summary] Finnhub news fetch error: {e}", exc_info=True)
@@ -179,12 +177,13 @@ class InfoCrawler:
         logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
         # 기사 수집 완료 알림
         throttled_notify("기사 수집 완료")
+
+        # ▶ 본문 크롤링 시작 알림
+        throttled_notify("기사 크롤링 중")
         if not merged_news:
             logger.warning("No news collected from Google or Finnhub.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
-        # 기사 내용 크롤링 시작
-        throttled_notify("기사 크롤링중")
         # 기사 본문 크롤링 및 요약 준비
         articles_for_prompt = []
         urls = [item.get("url") for item in merged_news]
@@ -214,7 +213,8 @@ class InfoCrawler:
                 except Exception as exc:
                     logger.error(f"Subquery '{url}' generated an exception: {exc}", exc_info=True)
         logger.info(f"[get_market_summary] articles_for_prompt length: {len(articles_for_prompt)}; first item: {articles_for_prompt[0] if articles_for_prompt else None}")
-        # 본문 수집 완료 알림
+        # ▶ 본문 크롤링 완료 알림
+        throttled_notify("기사 크롤링 완료")
         if not articles_for_prompt:
             logger.warning("Could not extract usable news article contents.")
             return "(뉴스 내용을 처리할 수 없습니다.)"
@@ -222,7 +222,7 @@ class InfoCrawler:
         # 1차 요약: 기사 전체를 한 번에 LLM에 보내 중복 없이 핵심만 요약
         from src.utils.azure_openai import azure_chat_completion
         # 1차 요약 시작 알림
-        throttled_notify("요약중")
+        throttled_notify("요약 중")
         # 실시간 KST 시간 가져오기
         now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
@@ -244,21 +244,38 @@ class InfoCrawler:
         resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO, messages=messages_1, max_tokens=8000, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
-        # 요약 완료 알림
-        if self.status_notifier:
-            self.status_notifier("요약 완료")
+        # ▶ 요약 완료 알림
+        throttled_notify("요약 완료")
         return first_summary
 
 
  # Example Usage
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-    
+
     if not settings.FINNHUB_API_KEY or not settings.AZURE_OPENAI_API_KEY:
         print("\nWarning: FINNHUB_API_KEY or AZURE_OPENAI_API_KEY not set. Summarization might fail.")
-    
-    crawler = InfoCrawler()
-    test_query = "최근 시장 동향은 어떤가요?"
-    summary = crawler.get_market_summary(test_query)
-    print(f"\n--- Market Summary for query: '{test_query}' ---")
-    print(summary) 
+
+    # (실제 사용 시 status_notifier 콜백을 정의해서 넘겨주세요)
+    import asyncio
+    async def main():
+        sent_msg = await some_channel.send("🟡 시작합니다...")
+        loop = asyncio.get_running_loop()
+        def notifier(key: str):
+            mapping = {
+                "기사 수집 중":      "🟡 기사 수집 중...",
+                "기사 수집 완료":    "✅ 기사 수집 완료!",
+                "기사 크롤링 중":    "🟡 기사 크롤링 중...",
+                "기사 크롤링 완료":  "✅ 기사 크롤링 완료!",
+                "요약 중":          "🟡 요약 중...",
+                "요약 완료":        "✅ 요약 완료!"
+            }
+            if content := mapping.get(key):
+                asyncio.run_coroutine_threadsafe(sent_msg.edit(content=content), loop)
+
+        crawler = InfoCrawler(status_notifier=notifier)
+        test_query = "최근 시장 동향은 어떤가요?"
+        summary = await loop.run_in_executor(None, crawler.get_market_summary, test_query)
+        await sent_msg.edit(content=summary)
+
+    asyncio.run(main())
