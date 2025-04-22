@@ -122,19 +122,9 @@ class TradeCog(commands.Cog):
         finally:
             db.close()
 
-        # 상태 임베드 생성
-        status_embed = Embed(
-            title="🔧 도구 실행 상태",
-            description="각 도구 호출 시 진행 상태를 업데이트합니다.",
-            color=0x5865f2
-        )
-        for tool in ["잔고조회", "시장조사", "시세조회"]:
-            status_embed.add_field(name=tool, value=ICON['pending'], inline=False)
-        status_msg = await thread.send(embed=status_embed)
-        # 세션 컨텍스트에 상태 메시지 ID 저장
+        # 세션 컨텍스트에 최소 정보만 저장 (status_msg_id 없이)
         self.bot.active_sessions[thread.id] = {
             'user_id': user.id,
-            'status_msg_id': status_msg.id,
             'start_time': datetime.now(),
             'last_interaction_time': datetime.now(),
             'llm_session_id': session_uuid
