@@ -24,6 +24,7 @@ class InfoCrawler:
         self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
         # 상태 업데이트 콜백 ("in_progress"/"completed"/"error")
         self.status_notifier = status_notifier
+        logger.debug(f"[InfoCrawler.__init__] status_notifier set: {bool(status_notifier)}")
 
         logger.info("InfoCrawler initialized (Google CSE + Finnhub).")
 
@@ -71,11 +72,22 @@ class InfoCrawler:
         def throttled_notify(msg):
             nonlocal last_status_time
             now = time.time()
-            if now - last_status_time > 1:
+            elapsed = now - last_status_time
+            logger.debug(f"[throttled_notify] elapsed={elapsed:.3f}s for '{msg}'")
+            if elapsed > 1:
                 if self.status_notifier:
-                    self.status_notifier(msg)
+                    try:
+                        logger.debug(f"[throttled_notify] sending '{msg}'")
+                        self.status_notifier(msg)
+                    except Exception as e:
+                        logger.error(f"[throttled_notify] notifier error for '{msg}': {e}", exc_info=True)
+                else:
+                    logger.debug(f"[throttled_notify] no notifier registered for '{msg}'")
                 last_status_time = now
+            else:
+                logger.debug(f"[throttled_notify] skipping '{msg}' due to throttling")
         # 단계 시작
+        logger.debug("[get_market_summary] 시작: market summary for query='%s'", user_query)
         throttled_notify("기사 수집 중")
         logger.info(f"[get_market_summary] called with user_query='{user_query}' max_articles={max_articles}")
         logger.info(f"Getting market summary for query: '{user_query}'")
@@ -113,6 +125,7 @@ class InfoCrawler:
         # Google 뉴스 API 결과 (최대 max_articles개)
         google_news_list = google_results[:max_articles] if isinstance(google_results, list) else []
         logger.info(f"[get_market_summary] Collected {len(google_news_list)} Google web results.")
+        logger.debug(f"[get_market_summary] merged_news size before crawling: {len(google_news_list)}")
 
         # Finnhub 일반 뉴스 결과: max_articles개만 사용
         try:
@@ -175,6 +188,7 @@ class InfoCrawler:
                 merged_news.append(news)
 
         logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
+        logger.debug(f"[get_market_summary] merged_news size after merge: {len(merged_news)}")
         # 기사 수집 완료 알림
         throttled_notify("기사 수집 완료")
 
@@ -185,6 +199,7 @@ class InfoCrawler:
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
         # 기사 본문 크롤링 및 요약 준비
+        logger.debug(f"[get_market_summary] fetching article texts for {len(urls)} URLs")
         articles_for_prompt = []
         urls = [item.get("url") for item in merged_news]
         with ThreadPoolExecutor(max_workers=10) as pool:
@@ -243,7 +258,7 @@ class InfoCrawler:
         ]
         resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO, messages=messages_1, max_tokens=8000, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
-        logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
+        logger.debug(f"[get_market_summary] 1차 요약 완료: articles={len(articles_for_prompt)}, length={len(first_summary)}")
         # ▶ 요약 완료 알림
         throttled_notify("요약 완료")
         return first_summary
