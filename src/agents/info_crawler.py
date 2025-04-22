@@ -64,9 +64,16 @@ class InfoCrawler:
 
 
     def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
+        last_status_time = 0
+        def throttled_notify(msg):
+            nonlocal last_status_time
+            now = time.time()
+            if now - last_status_time > 1:
+                if self.status_notifier:
+                    self.status_notifier(msg)
+                last_status_time = now
         # 단계 시작
-        if self.status_notifier:
-            self.status_notifier("in_progress")
+        throttled_notify("기사 수집중")
         logger.info(f"[get_market_summary] called with user_query='{user_query}' max_articles={max_articles}")
         logger.info(f"Getting market summary for query: '{user_query}'")
         
@@ -146,15 +153,13 @@ class InfoCrawler:
 
         logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
         # 기사 수집 완료 알림
-        if self.status_notifier:
-            self.status_notifier(f"{len(merged_news)}개 기사 수집완료")
+        throttled_notify("기사 수집중")
         if not merged_news:
             logger.warning("No news collected from Google or Finnhub.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
         # 기사 내용 크롤링 시작
-        if self.status_notifier:
-            self.status_notifier("기사 내용 수집중")
+        throttled_notify("크롤링중")
         # 기사 본문 크롤링 및 요약 준비
         articles_for_prompt = []
         urls = [item.get("url") for item in merged_news]
@@ -185,8 +190,6 @@ class InfoCrawler:
                     logger.error(f"Subquery '{url}' generated an exception: {exc}", exc_info=True)
         logger.info(f"[get_market_summary] articles_for_prompt length: {len(articles_for_prompt)}; first item: {articles_for_prompt[0] if articles_for_prompt else None}")
         # 본문 수집 완료 알림
-        if self.status_notifier:
-            self.status_notifier(f"{len(articles_for_prompt)}개 수집완료")
         if not articles_for_prompt:
             logger.warning("Could not extract usable news article contents.")
             return "(뉴스 내용을 처리할 수 없습니다.)"
@@ -194,8 +197,7 @@ class InfoCrawler:
         # 1차 요약: 기사 전체를 한 번에 LLM에 보내 중복 없이 핵심만 요약
         from src.utils.azure_openai import azure_chat_completion
         # 1차 요약 시작 알림
-        if self.status_notifier:
-            self.status_notifier("1차요약중")
+        throttled_notify("요약중")
         # 실시간 KST 시간 가져오기
         now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
         
