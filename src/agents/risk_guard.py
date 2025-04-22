@@ -19,7 +19,8 @@ class RiskGuard:
         """
         self.broker = broker
         self.max_daily_orders = settings.MAX_DAILY_ORDERS
-        self.stop_loss_percent = settings.STOP_LOSS_PERCENT # 고정 비율 손절 (ATR과 병행 또는 택일 가능)
+        self.stop_loss_percent = settings.STOP_LOSS_PERCENT
+        self.use_atr_stop_loss = True # ATR 기반 손절 사용 여부 (True 권장) # 고정 비율 손절 (ATR과 병행 또는 택일 가능)
         self.use_atr_stop_loss = True # ATR 기반 손절 사용 여부 (True 권장)
         self.atr_stop_loss_period = 14 # ATR 계산 기간 (손절용)
         self.atr_stop_loss_multiplier = 2.0 # ATR 배수 (예: 2*ATR)
@@ -29,6 +30,10 @@ class RiskGuard:
         # TODO: Track filled orders and capital usage for more accurate checks
         # self.used_capital = 0.0 # 실시간 잔고 조회로 대체
         self.max_api_retries = 3
+        # ── 새 규칙 ─────────────────────────────
+        self.max_position_weight = 0.25        # 포지션 1종 최대 25 %
+        self.max_portfolio_var  = 0.10         # 1‑일 VaR 10 % 초과 금지
+        self.slippage          = 0.001         # 체결 슬리피지 0.1 %
         self.api_backoff_seconds = 5
         logger.info(f"RiskGuard initialized. Max daily orders: {self.max_daily_orders}, Stop loss: {'ATR based' if self.use_atr_stop_loss else f'{self.stop_loss_percent*100}%'}")
 
@@ -104,6 +109,21 @@ class RiskGuard:
                 is_valid = False; validation_notes.append(f"Invalid quantity: {quantity}")
 
             # --- Risk Limit Checks ---
+            # ① 포트폴리오 비중 제한
+            current_eval = temp_positions.get(symbol, 0) * current_price
+            total_eval   = sum(q*current_price for q in temp_positions.values()) + \
+                           (available_cash - estimated_cash_needed)
+            if action == 'buy' and total_eval > 0:
+                if (current_eval/total_eval) > self.max_position_weight:
+                    is_valid = False
+                    validation_notes.append(f"Max 1‑symbol weight {self.max_position_weight*100:.0f}% exceeded")
+
+            # ② VaR 한도 초과 확인 (단순 σ·z 방식)
+            if action in ['buy', 'sell']:
+                projected_var = self._compute_portfolio_var(temp_positions)
+                if projected_var > self.max_portfolio_var:
+                    is_valid = False
+                    validation_notes.append(f"Projected VaR {projected_var:.2%} > limit")
             if self.daily_order_count + len(validated_orders) >= self.max_daily_orders:
                 # Check against counter + already validated orders in this batch
                 is_valid = False; validation_notes.append(f"Max daily order limit ({self.max_daily_orders}) reached")
@@ -161,6 +181,33 @@ class RiskGuard:
         return validated_orders
     
     # --- 손절 로직 (실행은 Orchestrator 담당) --- 
+
+    # ------------------------------------------------------------------
+    # 🔽 새 VaR 계산
+    # ------------------------------------------------------------------
+    def _compute_portfolio_var(self, positions_map: dict[str, int]) -> float:
+        """포지션 map을 받아 단순 ‘σ·1.65’ 1‑일 VaR(10 % 신뢰) 백분율 반환"""
+        symbols = list(positions_map.keys())
+        if not symbols: return 0.0
+        prices, weights, returns = [], [], []
+        # 수집
+        for sym, qty in positions_map.items():
+            try:
+                df = self.broker.get_historical_data(sym, period=60)
+                daily_ret = df['close'].pct_change().dropna()
+                if daily_ret.empty: continue
+                returns.append(daily_ret)
+                price = float(df['close'].iloc[-1])
+                prices.append(price)
+            except Exception:
+                continue
+        if not returns: return 0.0
+        import pandas as pd, numpy as np
+        ret_df = pd.concat(returns, axis=1).fillna(0)
+        cov = ret_df.cov()
+        port_var = float(np.sqrt(np.dot(weights := np.array([1/len(symbols)]*len(symbols)),
+                                        np.dot(cov * 252, weights.T))))
+        return 1.65 * port_var  # 90 % VaR
     def check_stop_loss(self, current_positions: list[dict]) -> list[dict]:
         """현재 보유 포지션에 대한 손절 조건 확인 (ATR 또는 고정 비율)
         

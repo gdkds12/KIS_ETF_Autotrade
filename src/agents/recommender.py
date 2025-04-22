@@ -9,8 +9,11 @@ class Recommender:
         self.finnhub = finnhub_client
         self.target_return = target_return
         self.risk_tolerance = risk_tolerance
-        # 후보 US ETF 목록 (필요시 확장 가능)
-        self.candidates = ["SPY", "QQQ", "VTI", "VOO", "VYM", "SCHD"]
+        # 동적 후보군: 최근 3개월 거래량 상위 100 ETF 중 대형·우량 ETF 선별
+        self.candidates = self._refresh_candidates()
+        self.risk_profile_map = {"conservative": 0.05,
+                                 "moderate":    0.07,
+                                 "aggressive":  0.12}
 
     def _fetch_price_series(self, symbol: str, period_days: int = 365) -> pd.DataFrame:
         """Finnhub에서 일별 종가 데이터를 가져와 DataFrame으로 반환"""
@@ -41,6 +44,16 @@ class Recommender:
         annual_vol = daily_vol * (252 ** 0.5)
         return annual_vol
 
+    def _max_drawdown(self, df: pd.DataFrame) -> float:
+        if df.empty: return 0.0
+        roll_max = df['close'].cummax()
+        dd = (df['close']/roll_max - 1).min()
+        return abs(dd)
+
+    def _refresh_candidates(self):
+        # TODO: implement dynamic candidate refresh logic
+        pass
+
     def recommend(self) -> dict:
         """
         연환산 수익률이 목표 이상인 ETF 중 Sharpe Ratio 기준 상위 종목 선정 후 가중치 부여
@@ -59,12 +72,16 @@ class Recommender:
             df = self._fetch_price_series(sym)
             ann_ret = self._compute_annualized_return(df)
             vol = self._compute_volatility(df)
-            if ann_ret >= self.target_return:
-                sharpe = ann_ret / vol if vol > 0 else 0
-                scored.append({'symbol': sym, 'annual_return': ann_ret, 'volatility': vol, 'sharpe': sharpe})
+            sharpe = ann_ret / vol if vol > 0 else 0
+            max_dd = self._max_drawdown(df)
+            if ann_ret >= self.risk_profile_map.get(self.risk_tolerance, self.target_return):
+                score = 0.6*sharpe + 0.3*ann_ret - 0.1*max_dd
+                scored.append({'symbol': sym, 'annual_return': ann_ret,
+                               'volatility': vol, 'max_dd': max_dd,
+                               'sharpe': sharpe, 'score': score})
 
         # Sharpe 비율 기준으로 내림차순 정렬
-        scored_sorted = sorted(scored, key=lambda x: x['sharpe'], reverse=True)
+        scored_sorted = sorted(scored, key=lambda x: x['score'], reverse=True)
         top_n = scored_sorted[:3]
         n = len(top_n)
         if n == 0:
@@ -72,3 +89,11 @@ class Recommender:
         weight = 1 / n
         weights = {item['symbol']: weight for item in top_n}
         return {'recommendations': top_n, 'weights': weights}
+
+    # --------------- Helper ----------------
+    @staticmethod
+    def _max_drawdown(df: pd.DataFrame) -> float:
+        if df.empty: return 0.0
+        roll_max = df['close'].cummax()
+        dd = (df['close']/roll_max - 1).min()
+        return abs(dd)

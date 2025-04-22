@@ -99,11 +99,12 @@ class BriefingAgent:
         logger.info(f"Generating briefing report from {len(execution_results)} execution results...")
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S KST")
         
+        # ── 📄  Template 헤더 ──────────────────────────
         report_parts = []
-        report_parts.append(f"## 📈 KIS ETF Autotrade Daily Report ({now_str}) 📊")
+        report_parts.append(f"# 📊 ETF Autotrade 리포트 ({now_str})")
         report_parts.append("\n")
 
-        # --- LLM 생성 요약 섹션 ---  
+        # ── ✨ AI 하이라이트 ──────────────────────────
         llm_summary = self._generate_llm_summary(execution_results)  
         report_parts.append("**✨ AI 종합 브리핑 ✨**")  
         # 멀티라인 요약을 Markdown 인용블록 형태로 들여쓰기  
@@ -111,7 +112,7 @@ class BriefingAgent:
         report_parts.append(f"> {indented}")
         report_parts.append("\n")
 
-        # --- 통계 요약 섹션 --- 
+        # ── 🏁 Cycle Stats ───────────────────────────
         summary = {"buy_success": 0, "sell_success": 0, "failed": 0, "hold": 0, "briefings": 0}
         llm_briefing_notes = []
 
@@ -140,14 +141,14 @@ class BriefingAgent:
         report_parts.append(f"- LLM Briefing Notes Received: {summary['briefings'] + len(llm_briefing_notes)}")
         report_parts.append("\n")
 
-        # --- LLM 브리핑 노트 섹션 (Orchestrator가 직접 전달한 노트) ---
+        # ── 📝 추가 노트 ───────────────────────────────
         if llm_briefing_notes:
              report_parts.append("**📝 LLM Orchestrator Notes:**")
              for note in llm_briefing_notes:
                  report_parts.append(f"- {note}")
              report_parts.append("\n")
 
-        # --- 상세 실행 결과 섹션 --- 
+        # ── ⚙️ 주문 내역 ───────────────────────────────
         report_parts.append("**⚙️ Execution Details:**")
         trade_actions_found = False
         for result in execution_results:
@@ -177,7 +178,11 @@ class BriefingAgent:
         if not trade_actions_found:
             report_parts.append("- No trade orders were attempted or executed in this cycle.")
         
-        report_parts.append("\n---\nEnd of Report")
+        # ── 차트 삽입 (선택) ───────────────────────────
+        if settings.ENABLE_CHART_IMAGE:
+            report_parts.append("![portfolio](cid:portfolio.png)")
+
+        report_parts.append("\n---\n_End of Report_")
         
         final_report = "\n".join(report_parts)
         logger.info(f"Generated briefing report (length: {len(final_report)}). Preview: {final_report[:200]}...")

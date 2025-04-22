@@ -24,7 +24,9 @@ logger = logging.getLogger(__name__)
 class MemoryRAG:
     """세션 로그 요약, 벡터 저장 및 검색을 위한 RAG 클래스"""
 
-    DEFAULT_SCORE_THRESHOLD = 0.65 # 유사도 검색 기본 임계값
+    DEFAULT_SCORE_THRESHOLD = 0.65           # 유사도 검색 기본 임계값
+    FORGET_AFTER_DAYS       = 30             # 30 일 경과 시 soft‑delete
+    MAX_MEMORY_PER_SESSION  = 50             # 세션당 최대 저장 벡터
 
     def __init__(self, db_session_factory: sessionmaker, qdrant_client: QdrantClient, llm_model: str):
         """MemoryRAG 초기화
@@ -122,7 +124,11 @@ class MemoryRAG:
             raise RuntimeError(f"Failed to get embedding: {e}")
 
     def save_memory(self, text: str, metadata: dict = None, memory_id: Optional[str] = None) -> str:
-        """텍스트와 메타데이터를 벡터화하여 Qdrant에 저장(upsert)합니다."""
+        """
+        텍스트를 벡터화해 Qdrant에 *스트리밍* 업서트합니다.  
+        - 동일 세션에서 `MAX_MEMORY_PER_SESSION` 초과 시 가장 오래된 벡터를 삭제  
+        - `FORGET_AFTER_DAYS` 를 초과한 메모리는 백그라운드에서 주기적으로 삭제
+        """
         if not text:
             logger.warning("Attempted to save memory with empty text. Skipping.")
             return None
@@ -135,7 +141,12 @@ class MemoryRAG:
         metadata['original_text'] = text # 원문 저장 (선택적)
 
         try:
+            # --- Streaming Upsert ---
             vector = self.get_embedding(text)
+
+            # 오래된 세션 메모리 정리
+            if session_uuid := metadata.get("session_uuid"):
+                self._enforce_session_quota(session_uuid)
             
             point = PointStruct(
                 id=memory_id,
