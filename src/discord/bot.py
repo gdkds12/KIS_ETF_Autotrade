@@ -164,18 +164,8 @@ class TradeCog(commands.Cog):
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
-        # 1. 먼저 진행 embed 메시지 따로 전송
-        embed = Embed(
-            title="📊 시장 동향",
-            description="기사 수집중...",
-            color=0x3498db,
-            timestamp=datetime.now(timezone.utc)
-        )
-        sent_msg = await interaction.response.send_message(embed=embed, wait=True) if hasattr(interaction.response, 'send_message') else await interaction.followup.send(embed=embed, wait=True)
-        # discord.py 2.x: interaction.response.send_message는 메시지 반환 X, followup.send 사용
-        if not hasattr(sent_msg, 'edit'):
-            sent_msg = await interaction.original_response()
-
+        # 1. 먼저 진행 메시지(일반 텍스트) 전송
+        sent_msg = await interaction.followup.send("기사 수집중...", wait=True)
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
             await interaction.followup.send("Orchestrator가 준비되지 않았습니다.")
@@ -184,16 +174,13 @@ class TradeCog(commands.Cog):
         # 2. status_notifier에서 해당 메시지를 단계별로 수정
         async def status_notifier(msg):
             if msg == "기사 내용 수집중":
-                embed.description = "기사 수집중..."
+                await sent_msg.edit(content="기사 수집중...")
             elif msg.endswith("기사 수집완료"):
-                embed.description = "기사 수집 완료!"
+                await sent_msg.edit(content="기사 수집 완료!")
             elif msg == "1차요약중":
-                embed.description = "요약중..."
+                await sent_msg.edit(content="요약중...")
             elif msg == "요약완료":
-                embed.description = "요약완료!"
-            else:
-                embed.description = msg
-            await sent_msg.edit(embed=embed)
+                await sent_msg.edit(content="요약완료!")
 
         def notifier_sync(msg):
             asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
@@ -206,9 +193,8 @@ class TradeCog(commands.Cog):
             orchestrator.info_crawler.get_market_summary,
             query
         )
-        # 3. 마지막으로 요약 결과로 embed 업데이트
-        embed.description = summary
-        await sent_msg.edit(embed=embed)
+        # 3. 마지막으로 요약 결과로 메시지 업데이트
+        await sent_msg.edit(content=summary)
 
 
     @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
@@ -245,6 +231,10 @@ class TradeCog(commands.Cog):
             "주식/ETF의 시세를 조회할 때, 입력이 정확한 심볼(티커, 종목코드 등)인지 먼저 확인하세요. 심볼이 확실하면 get_quote를 바로 호출하고, 그렇지 않으면 search_symbols로 심볼을 찾은 후 get_quote를 호출하세요.\n"
             "그 외에는 자연스럽게 한국어로 답변하세요."
         }])
+        # 실시간 KST 시간 프롬프트에 추가
+        import datetime, pytz
+        now_kst = datetime.datetime.now(pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+        history.insert(0, {"role": "system", "content": f"현재 시각은 {now_kst} (KST)입니다."})
         history.append({"role": "user", "content": message.content})
 
         logger.debug(f"[on_message] 1st call to azure_chat_completion (detect function_call)")
