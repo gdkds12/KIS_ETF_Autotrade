@@ -341,7 +341,7 @@ class TradeCog(commands.Cog):
 
         # Update session history & last touch
         session["history"] = history
-        session["last_interaction_time"] = datetime.now()
+        session["last_interaction_time"] = datetime.datetime.now()
         self.bot.active_sessions[channel_id] = session
         logger.debug(f"[on_message] handler finished.")
 
