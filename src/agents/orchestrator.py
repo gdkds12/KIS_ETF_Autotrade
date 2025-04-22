@@ -16,6 +16,7 @@ from src.config import settings
 from src.brokers.kis import KisBroker, KisBrokerError
 from src.agents.info_crawler import InfoCrawler
 from src.agents.memory_rag import MemoryRAG
+from src.agents.portfolio_manager import PortfolioManager
 # TradingStrategy 모듈 사용이 필요없다면 import 삭제
 # from src.agents.strategy import TradingStrategy # <- 이 줄 삭제됨
 from src.agents.risk_guard import RiskGuard
@@ -136,7 +137,9 @@ class Orchestrator:
         self.risk_guard = RiskGuard(broker=self.broker)
         self.briefing_agent = BriefingAgent() # LLM could be passed here too
 
-        logger.info("Orchestrator initialized all agents.")
+        # PortfolioManager 인스턴스화
+        self.portfolio_manager = PortfolioManager(self.broker)
+        logger.info("Orchestrator initialized all agents and portfolio_manager.")
 
     # ------------------------------------------------------------------
     # LLM‑CALLABLE HELPER FUNCTIONS (REMOVED - now defined in registry.py)
@@ -234,13 +237,15 @@ class Orchestrator:
             self._notify_step("Recommender", "완료")
 
             # 3. 현재 포지션 조회
-            self._notify_step("Get Positions", "시작")
-            current_positions = self._get_current_positions()
-            self._notify_step("Get Positions", "완료")
+            # 3. 포트폴리오 스냅샷
+            self._notify_step("Portfolio Snapshot", "시작")
+            snapshot = self.portfolio_manager.snapshot()
+            self._notify_step("Portfolio Snapshot", "완료")
 
             # 3.5. 포트폴리오 상황 보고서 생성
             self._notify_step("Portfolio Report", "시작")
-            portfolio_report = self._summarize_portfolio_status(current_positions)
+            # snapshot["positions"]와 snapshot["performance"] 활용
+            portfolio_report = self._summarize_portfolio_status(snapshot["positions"])
             self._notify_step("Portfolio Report", "완료")
 
             # 4. 과거 메모리 검색
