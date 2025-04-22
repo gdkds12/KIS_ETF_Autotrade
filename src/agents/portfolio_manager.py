@@ -12,11 +12,17 @@ class PortfolioManager:
         self.broker = broker
 
     def snapshot(self) -> Dict[str, Any]:
-        """잔고, 포지션, 그리고 기본 성과 지표(Box)까지 포함"""
-        balance   = self.broker.get_balance()
+        """잔고·포지션·performance 등을 한 번에 리턴"""
+        balance = self.broker.get_balance()
         positions = self.broker.get_positions()
-        perf      = self._calc_performance(positions, balance)
-        return {"balance": balance, "positions": positions, "performance": perf}
+        # Performance: (총평가자산 / 투자원금) - 1
+        principal = balance.get("total_purchase_amount", balance.get("principal", 1))
+        perf = (balance["total_asset_value"] / principal) - 1 if principal else 0
+        return {
+            "balance": balance,
+            "positions": positions,
+            "performance": perf
+        }
 
     # ------------------------ Helper ------------------------
     def _calc_performance(self, positions, balance) -> dict:

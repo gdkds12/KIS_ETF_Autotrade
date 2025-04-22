@@ -1,16 +1,23 @@
 import pandas as pd
 from datetime import datetime, timedelta
+from src.config import settings
 
 class Recommender:
     """
     사용자 프로필과 시장 데이터를 기반으로 US ETF 추천 및 포트폴리오 가중치 계산
     """
-    def __init__(self, finnhub_client, target_return: float = 0.07, risk_tolerance: str = 'moderate'):
+    def __init__(
+        self,
+        finnhub_client,
+        target_return: float = settings.TARGET_RETURN,
+        risk_tolerance: str = settings.RISK_TOLERANCE,
+        candidates: list[str] | None = None
+    ):
         self.finnhub = finnhub_client
         self.target_return = target_return
         self.risk_tolerance = risk_tolerance
-        # 동적 후보군: 최근 3개월 거래량 상위 100 ETF 중 대형·우량 ETF 선별
-        self.candidates = self._refresh_candidates()
+        # 외부에서 전달하거나 설정에 정의된 후보군 사용
+        self.candidates = candidates or settings.CANDIDATE_SYMBOLS
         self.risk_profile_map = {"conservative": 0.05,
                                  "moderate":    0.07,
                                  "aggressive":  0.12}

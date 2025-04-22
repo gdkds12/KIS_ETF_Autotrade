@@ -155,6 +155,12 @@ class Orchestrator:
         return self.info_crawler.get_market_summary()
 
     def run_daily_cycle(self):
+        # 노후 메모리 삭제
+        try:
+            self.memory_rag.gc_old_memories()
+            logger.info("Old memories collected and cleaned up.")
+        except Exception as e:
+            logger.warning(f"Failed to gc old memories: {e}")
         """일일 자동매매 사이클 실행 (AI 주도 쿼리 추천 → 정보 수집 → 추천 → 전략 → 실행)
         """
         self._notify_step("Daily Cycle", "시작")
@@ -210,19 +216,21 @@ class Orchestrator:
             market_data = self._fetch_market_data()
             self._notify_step("Market Fetch", "완료")
 
-            # 2.5. 추천 종목 산출 (Recommender 활용, 쿼리 기반)
+            # 2.5. 추천 종목 산출 (Recommender 활용)
+            self.recommender = Recommender(
+                self.finnhub_client,
+                target_return=settings.TARGET_RETURN,
+                risk_tolerance=settings.RISK_TOLERANCE,
+                candidates=settings.CANDIDATE_SYMBOLS
+            )
             self._notify_step("Recommender", "시작")
-            recommender = self.recommender if hasattr(self, 'recommender') else None
-            recommendations = []
-            if recommender:
-                try:
-                    rec_result = recommender.recommend(query=query)
-                    recommendations = rec_result.get('recommendations', []) if isinstance(rec_result, dict) else rec_result
-                    logger.info(f"Recommender output: {recommendations}")
-                except Exception as e:
-                    logger.error(f"Recommender failed: {e}")
-            else:
-                logger.warning("No recommender attached to Orchestrator; skipping recommendations.")
+            try:
+                rec = self.recommender.recommend()
+                recommendations = rec.get('recommendations', [])
+                logger.info(f"Recommender output: {recommendations}")
+            except Exception as e:
+                logger.error(f"Recommender failed: {e}")
+                recommendations = []
             self._notify_step("Recommender", "완료")
 
             # 3. 현재 포지션 조회
