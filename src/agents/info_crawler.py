@@ -63,7 +63,9 @@ class InfoCrawler:
             return ""
 
 
-    def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
+    import time
+
+def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
         last_status_time = 0
         def throttled_notify(msg):
             nonlocal last_status_time
