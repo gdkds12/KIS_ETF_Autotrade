@@ -27,15 +27,43 @@ GUILD_ID = 1363088557517967582
 
 logger = logging.getLogger(__name__)
 
+# 상태 메시지 아이콘 매핑
+ICON = {
+    'pending': '⚪️',
+    'in_progress': '🟡',
+    'completed': '✅',
+    'error': '❌',
+}
+
 class TradeCog(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+    async def _update_tool_status(self, thread_id: int, tool_name: str, status: str):
+        """
+        지정된 스레드의 상태 메시지를 수정하여 tool_name 단계를 업데이트합니다.
+        status는 'pending'|'in_progress'|'completed'|'error' 중 하나.
+        """
+        sess = self.bot.active_sessions.get(thread_id)
+        if not sess:
+            return
+        channel = self.bot.get_channel(thread_id)
+        msg = await channel.fetch_message(sess['status_msg_id'])
+        embed = msg.embeds[0]
+        for i, field in enumerate(embed.fields):
+            if field.name == tool_name:
+                embed.set_field_at(i, name=tool_name, value=ICON[status], inline=False)
+                break
+        await msg.edit(embed=embed)
+
     @app_commands.command(name="balance", description="현재 계좌의 잔고(예수금, 총자산 등)를 조회합니다.")
     async def balance(self, interaction: Interaction):
+        thread_id = interaction.channel.id
+        await self._update_tool_status(thread_id, "잔고조회", "in_progress")
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
             await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
+            await self._update_tool_status(thread_id, "잔고조회", "error")
             return
         try:
             balance = orchestrator.broker.get_balance()
@@ -54,8 +82,10 @@ class TradeCog(commands.Cog):
             embed.add_field(name="총손익", value=(f"{total_pnl:,}원" if isinstance(total_pnl, (int, float)) else f"{total_pnl}원"), inline=False)
             embed.add_field(name="총손익률", value=(f"{pnl_percent}%" if isinstance(pnl_percent, (int, float)) else f"{pnl_percent}%"), inline=False)
             await interaction.response.send_message(embed=embed)
+            await self._update_tool_status(thread_id, "잔고조회", "completed")
         except Exception as e:
             logger.error(f"/balance command error: {e}", exc_info=True)
+            await self._update_tool_status(thread_id, "잔고조회", "error")
             await interaction.response.send_message(f"잔고 조회 중 오류가 발생했습니다: {e}")
 
     @app_commands.command(name="trade", description="새로운 트레이딩 세션을 시작합니다.")
@@ -89,8 +119,19 @@ class TradeCog(commands.Cog):
         finally:
             db.close()
 
+        # 상태 임베드 생성
+        status_embed = Embed(
+            title="🔧 도구 실행 상태",
+            description="각 도구 호출 시 진행 상태를 업데이트합니다.",
+            color=0x5865f2
+        )
+        for tool in ["잔고조회", "시장조사", "시세조회"]:
+            status_embed.add_field(name=tool, value=ICON['pending'], inline=False)
+        status_msg = await thread.send(embed=status_embed)
+        # 세션 컨텍스트에 상태 메시지 ID 저장
         self.bot.active_sessions[thread.id] = {
             'user_id': user.id,
+            'status_msg_id': status_msg.id,
             'start_time': datetime.now(),
             'last_interaction_time': datetime.now(),
             'llm_session_id': session_uuid
@@ -120,26 +161,30 @@ class TradeCog(commands.Cog):
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
+        thread_id = interaction.channel.id
+        await self._update_tool_status(thread_id, "시장조사", "in_progress")
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
             await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
+            await self._update_tool_status(thread_id, "시장조사", "error")
             return
 
         # get_market_summary() 는 동기 함수이므로 블로킹 방지
         import asyncio
         loop = asyncio.get_running_loop()
-        market_summary = await loop.run_in_executor(
+        summary = await loop.run_in_executor(
             None,
             orchestrator.info_crawler.get_market_summary,
             query
         )
         embed = Embed(
             title="📊 시장 동향",
-            description=market_summary,
+            description=summary,
             color=0x3498db,
             timestamp=datetime.now(timezone.utc)
         )
         await interaction.response.send_message(embed=embed)
+        await self._update_tool_status(thread_id, "시장조사", "completed")
 
     @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
     async def confirm_order(self, interaction: Interaction, order_details: str):
@@ -265,7 +310,7 @@ class TradeCog(commands.Cog):
                 azure_chat_completion,
                 settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
                 history,
-                1000,
+                3000,
                 0.5
             )
             final_answer = resp2["choices"][0]["message"]["content"]

@@ -18,9 +18,12 @@ class InfoCrawler:
     웹사이트 크롤링, 뉴스 검색 등을 수행하는 클래스입니다.
     """
 
-    def __init__(self):
+    def __init__(self, status_notifier=None):
         # Finnhub + Google Custom Search 기반으로 재구성
         self.finnhub = FinnhubClient(settings.FINNHUB_API_KEY)
+        # 상태 업데이트 콜백 ("in_progress"/"completed"/"error")
+        self.status_notifier = status_notifier
+
         logger.info("InfoCrawler initialized (Google CSE + Finnhub).")
 
     def fetch_article_text(self, url: str) -> str:
@@ -61,6 +64,9 @@ class InfoCrawler:
 
 
     def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
+        # 단계 시작
+        if self.status_notifier:
+            self.status_notifier("in_progress")
         logger.info(f"[get_market_summary] called with user_query='{user_query}' max_articles={max_articles}")
         logger.info(f"Getting market summary for query: '{user_query}'")
         
@@ -223,6 +229,9 @@ class InfoCrawler:
         resp_1 = azure_chat_completion(settings.AZURE_OPENAI_DEPLOYMENT_GPT4_1_NANO, messages=messages_1, max_tokens=8000, temperature=0.3)
         first_summary = resp_1["choices"][0]["message"]["content"].strip()
         logger.info(f"[요약] 1차 요약 완료 (기사 {len(articles_for_prompt)}개, 요약 길이: {len(first_summary)})")
+        # 단계 완료
+        if self.status_notifier:
+            self.status_notifier("completed")
         return first_summary
 
 
