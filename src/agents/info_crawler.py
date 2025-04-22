@@ -7,6 +7,7 @@ from src.agents.finnhub_client import FinnhubClient
 from src.config import settings
 import datetime
 import pytz
+import time  # time 모듈을 전역에서 한 번만 임포트
 
 logger = logging.getLogger(__name__)
 
@@ -63,9 +64,9 @@ class InfoCrawler:
             return ""
 
 
-    import time
+        # (불필요한 import time 구문 삭제됨)
 
-def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
+    def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
         last_status_time = 0
         def throttled_notify(msg):
             nonlocal last_status_time
@@ -128,34 +129,56 @@ def get_market_summary(self, user_query: str, max_articles: int = 10) -> str:
         merged_news = []
         # Google 뉴스: url, title/headline, snippet/summary
         for item in google_news_list:
-            url = item.get('url') or item.get('link')
+            headline = item.get("title") or item.get("headline") or ""
+            summary = item.get("snippet") or item.get("summary") or ""
+            url = item.get("link") or item.get("url") or ""
+            publisher = item.get("displayLink") or item.get("publisher") or ""
+            date = item.get("datePublished", "") or item.get("pubDate", "")
+            # Google CSE 결과는 문자열 날짜, 그대로 사용
+            if date and isinstance(date, int):
+                # 혹시라도 int로 들어오면 ISO 포맷으로 변환
+                date = datetime.datetime.fromtimestamp(date, pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+            source = "GoogleCSE"
+            news = {
+                "headline": headline,
+                "summary": summary,
+                "url": url,
+                "publisher": publisher,
+                "date": date,
+                "source": source
+            }
             if url and url not in url_set:
                 url_set.add(url)
-                merged_news.append({
-                    'url': url,
-                    'headline': item.get('headline', '') or item.get('title', ''),
-                    'summary': item.get('summary', '') or item.get('snippet', ''),
-                    'source': 'google',
-                    'publisher': item.get('displayLink', ''),
-                    'date': item.get('datePublished', '') or item.get('pubDate', '')
-                })
+                merged_news.append(news)
         # Finnhub 뉴스: url, headline, summary (본문은 fetch_article_text로 크롤링)
         for item in finnhub_news_list:
-            url = item.get('url', '')
+            headline = item.get("headline") or ""
+            summary = item.get("summary") or ""
+            url = item.get("url") or ""
+            publisher = item.get("source") or ""
+            date = item.get("datetime", "")
+            source = "Finnhub"
+            # finnhub의 datetime은 int(timestamp)일 수 있음
+            if isinstance(date, int):
+                date = datetime.datetime.fromtimestamp(date, pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+            elif date and isinstance(date, str) and date.isdigit():
+                # 혹시 문자열 숫자인 경우도 변환
+                date = datetime.datetime.fromtimestamp(int(date), pytz.timezone('Asia/Seoul')).strftime("%Y-%m-%d %H:%M:%S")
+            news = {
+                "headline": headline,
+                "summary": summary,
+                "url": url,
+                "publisher": publisher,
+                "date": date,
+                "source": source
+            }
             if url and url not in url_set:
                 url_set.add(url)
-                merged_news.append({
-                    'url': url,
-                    'headline': item.get('headline', ''),
-                    'summary': item.get('summary', ''),
-                    'source': 'finnhub',
-                    'publisher': item.get('source', 'Finnhub'),
-                    'date': item.get('datetime', '') # finnhub는 timestamp(int)일 수 있음
-                })
+                merged_news.append(news)
 
         logger.info(f"[get_market_summary] Total merged news count: {len(merged_news)}")
         # 기사 수집 완료 알림
-        throttled_notify("기사 수집중")
+        throttled_notify("기사 수집 완료")
         if not merged_news:
             logger.warning("No news collected from Google or Finnhub.")
             return "(관련 웹 정보를 가져올 수 없습니다.)"
