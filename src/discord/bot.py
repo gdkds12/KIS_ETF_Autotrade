@@ -15,10 +15,12 @@ from src.config import settings
 from src.agents.orchestrator import Orchestrator
 from src.brokers.kis import KisBroker
 from src.db.models import TradingSession, SessionLocal
-from src.utils.registry import set_orchestrator
+from src.utils.registry import set_orchestrator, COMMANDS, ORCHESTRATOR
 from src.utils.discord_utils import DiscordRequestType
 from src.discord.utils import send_discord_request
 import asyncio
+import functools
+import json
 from src.utils.azure_openai import azure_chat_completion  # REST-based AI chat support
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s %(name)s: %(message)s')
@@ -257,52 +259,11 @@ class TradeCog(commands.Cog):
         assistant_msg = resp["choices"][0]["message"]
 
         # ---------- 함수 호출인지 확인 ----------
-        import json as _json
         tool_calls = assistant_msg.get("tool_calls")
         function_call = assistant_msg.get("function_call")
         if tool_calls or function_call:
             status_msg = None  # 항상 미리 선언
-            if tool_calls:
-                # 최신 스펙 (role: tool/tool_call_id)
-                tool_call = tool_calls[0]
-                func_name = tool_calls and tool_calls[0]["function"].get("name") or function_call["name"]
-                args = tool_calls and tool_calls[0]["arguments"] or function_call["arguments"]
-                args_dict = _json.loads(args) if isinstance(args, str) else args
-
-                # — get_market_summary 호출 시 상태 메시지 준비 —
-                if func_name == "get_market_summary":
-                    # 1) 초기 상태 메시지 전송
-                    loop = asyncio.get_running_loop()
-                    status_msg = await message.channel.send("🟡 기사 수집 중...")
-
-                    # 2) 단계별 상태 편집 콜백 정의
-                    def notifier(step: str):
-                        mapping = {
-                            "기사 수집 중":   "🟡 기사 수집 중...",
-                            "기사 수집 완료": "✅ 기사 수집 완료!",
-                            "기사 크롤링 중": "🟡 기사 크롤링 중...",
-                            "기사 크롤링 완료": "✅ 기사 크롤링 완료!",
-                            "요약 중":       "🟡 요약 중...",
-                            "요약 완료":     "✅ 요약 완료!"
-                        }
-                        content = mapping.get(step)
-                        if content:
-                            asyncio.run_coroutine_threadsafe(status_msg.edit(content=content), loop)
-
-                    # 3) InfoCrawler에 콜백 등록 (레지스트리 함수 실행 전 반드시 등록)
-                    from src.utils.registry import ORCHESTRATOR
-                    ORCHESTRATOR.info_crawler.status_notifier = notifier
-            else:
-                # 구버전 (role: function)
-                func_name = function_call["name"]
-                args = function_call["arguments"]
-                tool_call_id = assistant_msg.get("id")
-                args_dict = _json.loads(args) if isinstance(args, str) else args
-            logger.info(f"[on_message] Detected function/tool_call: {func_name} {args_dict}")
-
-            from src.utils import registry
-            func = registry.COMMANDS.get(func_name)
-            if not func:
+            if message.author.bot:
                 await message.channel.send(f"알 수 없는 함수 호출: {func_name}")
                 return
 
