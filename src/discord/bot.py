@@ -164,24 +164,39 @@ class TradeCog(commands.Cog):
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
-        thread_id = interaction.channel.id
-        await self._update_tool_status(thread_id, "시장조사", "in_progress", description="시장조사 진행중...")
+        # 1. 먼저 진행 embed 메시지 따로 전송
+        embed = Embed(
+            title="📊 시장 동향",
+            description="기사 수집중...",
+            color=0x3498db,
+            timestamp=datetime.now(timezone.utc)
+        )
+        sent_msg = await interaction.response.send_message(embed=embed, wait=True) if hasattr(interaction.response, 'send_message') else await interaction.followup.send(embed=embed, wait=True)
+        # discord.py 2.x: interaction.response.send_message는 메시지 반환 X, followup.send 사용
+        if not hasattr(sent_msg, 'edit'):
+            sent_msg = await interaction.original_response()
+
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
-            await interaction.response.send_message("Orchestrator가 준비되지 않았습니다.")
-            await self._update_tool_status(thread_id, "시장조사", "error", description="시장조사 오류")
+            await interaction.followup.send("Orchestrator가 준비되지 않았습니다.")
             return
 
-        # status_notifier 콜백 정의
+        # 2. status_notifier에서 해당 메시지를 단계별로 수정
         async def status_notifier(msg):
-            # msg 예: '기사 내용 수집중', '5개 기사 수집완료', ...
-            await self._update_tool_status(thread_id, "시장조사", "in_progress", description=f"시장조사: {msg}")
+            if msg == "기사 내용 수집중":
+                embed.description = "기사 수집중..."
+            elif msg.endswith("기사 수집완료"):
+                embed.description = "기사 수집 완료!"
+            elif msg == "1차요약중":
+                embed.description = "요약중..."
+            elif msg == "요약완료":
+                embed.description = "요약완료!"
+            else:
+                embed.description = msg
+            await sent_msg.edit(embed=embed)
 
-        # 동기 함수에 async 콜백을 넘기려면 래퍼 필요
-        from functools import partial
         def notifier_sync(msg):
             asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
-
         orchestrator.info_crawler.status_notifier = notifier_sync
 
         import asyncio
@@ -191,14 +206,9 @@ class TradeCog(commands.Cog):
             orchestrator.info_crawler.get_market_summary,
             query
         )
-        embed = Embed(
-            title="📊 시장 동향",
-            description=summary,
-            color=0x3498db,
-            timestamp=datetime.now(timezone.utc)
-        )
-        await interaction.response.send_message(embed=embed)
-        await self._update_tool_status(thread_id, "시장조사", "completed", description="시장조사 완료")
+        # 3. 마지막으로 요약 결과로 embed 업데이트
+        embed.description = summary
+        await sent_msg.edit(embed=embed)
 
 
     @app_commands.command(name="confirm_order", description="주문을 확인하고 실행합니다.")
