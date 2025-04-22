@@ -154,29 +154,30 @@ class TradeCog(commands.Cog):
 
     @app_commands.command(name="market_summary", description="시장 동향을 요약하여 보여줍니다.")
     async def market_summary(self, interaction: Interaction, query: str):
-        # 1. 진행상황 메시지(텍스트)만 전송, 도구상태 embed 사용 금지
-        sent_msg = await interaction.followup.send("기사 수집중...", wait=True)
+        # 1. 최초 응답을 defer로 처리 후 followup 메시지 전송
+        await interaction.response.defer()
+        sent_msg = await interaction.followup.send("🟡 기사 수집 중...", ephemeral=False)
         orchestrator = self.bot.get_orchestrator()
         if not orchestrator:
             await interaction.followup.send("Orchestrator가 준비되지 않았습니다.")
             return
 
-        # 2. status_notifier를 market_summary에서만 동적으로 연결 (도구상태 embed와 분리)
-        async def status_notifier(msg):
-            # InfoCrawler에서 정확히 아래 4단계 메시지만 호출
-            if msg == "기사 내용 수집중" or msg == "기사 수집중":
-                await sent_msg.edit(content="기사 수집중...")
-            elif msg.endswith("기사 수집완료") or msg == "기사 수집 완료":
-                await sent_msg.edit(content="기사 수집 완료!")
-            elif msg == "1차요약중" or msg == "요약중":
-                await sent_msg.edit(content="요약중...")
-            elif msg == "요약완료":
-                await sent_msg.edit(content="요약완료!")
-
-        def notifier_sync(msg):
-            asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
-        # status_notifier를 임시 연결
-        orchestrator.info_crawler.status_notifier = notifier_sync
+        # 2. status_notifier를 InfoCrawler의 6단계 키와 1:1 매핑
+        def status_notifier(key: str):
+            mapping = {
+                "기사 수집 중":      "🟡 기사 수집 중...",
+                "기사 수집 완료":    "✅ 기사 수집 완료!",
+                "기사 크롤링 중":    "🟡 기사 크롤링 중...",
+                "기사 크롤링 완료":  "✅ 기사 크롤링 완료!",
+                "요약 중":          "🟡 요약 중...",
+                "요약 완료":        "✅ 요약 완료!"
+            }
+            if content := mapping.get(key):
+                asyncio.run_coroutine_threadsafe(
+                    sent_msg.edit(content=content),
+                    asyncio.get_running_loop()
+                )
+        orchestrator.info_crawler.status_notifier = status_notifier
 
         import asyncio
         loop = asyncio.get_running_loop()
@@ -278,11 +279,11 @@ class TradeCog(commands.Cog):
                         if not status_msg:
                             return
                         mapping = {
-                            "기사 수집중":   "🟡 기사 수집 중...",
+                            "기사 수집 중":   "🟡 기사 수집 중...",
                             "기사 수집 완료": "✅ 기사 수집 완료!",
-                            "기사 크롤링중": "🟡 기사 크롤링 중...",
+                            "기사 크롤링 중": "🟡 기사 크롤링 중...",
                             "기사 크롤링 완료": "✅ 기사 크롤링 완료!",
-                            "요약중":       "🟡 요약 중...",
+                            "요약 중":       "🟡 요약 중...",
                             "요약 완료":     "✅ 요약 완료!"
                         }
                         content = mapping.get(step)
