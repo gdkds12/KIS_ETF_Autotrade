@@ -199,9 +199,9 @@ class InfoCrawler:
             return "(관련 웹 정보를 가져올 수 없습니다.)"
 
         # 기사 본문 크롤링 및 요약 준비
+        urls = [item.get("url") for item in merged_news]
         logger.debug(f"[get_market_summary] fetching article texts for {len(urls)} URLs")
         articles_for_prompt = []
-        urls = [item.get("url") for item in merged_news]
         with ThreadPoolExecutor(max_workers=10) as pool:
             future_to_url = {pool.submit(self.fetch_article_text, url): url for url in urls if url}
             for future in as_completed(future_to_url):
