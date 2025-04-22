@@ -272,12 +272,11 @@ class TradeCog(commands.Cog):
                 # — get_market_summary 호출 시 상태 메시지 준비 —
                 if func_name == "get_market_summary":
                     # 1) 초기 상태 메시지 전송
+                    loop = asyncio.get_running_loop()
                     status_msg = await message.channel.send("🟡 기사 수집 중...")
 
                     # 2) 단계별 상태 편집 콜백 정의
-                    async def status_notifier(step: str):
-                        if not status_msg:
-                            return
+                    def notifier(step: str):
                         mapping = {
                             "기사 수집 중":   "🟡 기사 수집 중...",
                             "기사 수집 완료": "✅ 기사 수집 완료!",
@@ -288,11 +287,11 @@ class TradeCog(commands.Cog):
                         }
                         content = mapping.get(step)
                         if content:
-                            await status_msg.edit(content=content)
+                            asyncio.run_coroutine_threadsafe(status_msg.edit(content=content), loop)
 
-                    # 3) InfoCrawler에 콜백 등록
+                    # 3) InfoCrawler에 콜백 등록 (레지스트리 함수 실행 전 반드시 등록)
                     from src.utils.registry import ORCHESTRATOR
-                    ORCHESTRATOR.info_crawler.status_notifier = lambda msg: asyncio.run_coroutine_threadsafe(status_notifier(msg), asyncio.get_event_loop())
+                    ORCHESTRATOR.info_crawler.status_notifier = notifier
             else:
                 # 구버전 (role: function)
                 func_name = function_call["name"]
